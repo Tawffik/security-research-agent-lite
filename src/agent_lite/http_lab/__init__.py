@@ -1,4 +1,3 @@
-"""Re-export for local convenience; import agent_lite.http_lab in CI."""
 from agent_lite.http_lab.bola_local_server import BolaLocalServer
 
 __all__ = ["BolaLocalServer"]

@@ -17,7 +17,7 @@ from agent_lite.http.executor import HttpExecutor
 from agent_lite.identity.resolver import Identity, IdentityResolver, SessionMaterial
 from agent_lite.runtime.pipeline import ResearchPipeline
 from agent_lite.scope.guard import ScopeGuard
-from tests.http_lab.bola_local_server import BolaLocalServer
+from agent_lite.http_lab.bola_local_server import BolaLocalServer
 
 
 def _write_scope(tmp: Path, host: str = "127.0.0.1") -> Path:
