@@ -236,6 +236,12 @@ class HttpExecutor:
     def _urllib_transport(
         self, req: ActionRequest, headers: dict
     ) -> tuple[int, dict, str, float]:
+        """
+        Real transport. Does NOT follow redirects automatically.
+
+        A 3xx is returned as an observation (status + Location). The pipeline /
+        scope layer must never chase a Location host outside allowed scope.
+        """
         if not _HAS_URLLIB:
             raise RuntimeError("urllib unavailable")
         data = None
@@ -248,9 +254,15 @@ class HttpExecutor:
             method=req.method.upper(),
         )
         ctx = ssl.create_default_context()
+        # Fail-closed: no automatic redirect following (scope-confusing hosts)
+        opener = urllib.request.build_opener(
+            urllib.request.HTTPSHandler(context=ctx),
+            urllib.request.HTTPHandler(),
+            _NoRedirectHandler(),
+        )
         t0 = time.perf_counter()
         try:
-            with urllib.request.urlopen(r, timeout=req.timeout_seconds, context=ctx) as resp:
+            with opener.open(r, timeout=req.timeout_seconds) as resp:
                 body_bytes = resp.read(self.budget.state.max_response_bytes + 1)
                 if len(body_bytes) > self.budget.state.max_response_bytes:
                     body_bytes = body_bytes[: self.budget.state.max_response_bytes]
@@ -264,3 +276,10 @@ class HttpExecutor:
             resp_headers = {k: v for k, v in (e.headers.items() if e.headers else [])}
         duration_ms = (time.perf_counter() - t0) * 1000.0
         return status, resp_headers, body, duration_ms
+
+
+class _NoRedirectHandler(urllib.request.HTTPRedirectHandler if _HAS_URLLIB else object):  # type: ignore[misc]
+    """Record redirects as final responses; never chase Location automatically."""
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):  # noqa: ANN001
+        return None  # causes HTTPError with the 3xx response
