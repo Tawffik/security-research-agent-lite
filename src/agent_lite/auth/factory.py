@@ -34,10 +34,16 @@ def build_orchestrator(
     *,
     target: str = "lab://synthetic",
     allow_mock_for_unknown: bool = False,
+    force_allow_registration: bool = False,
 ) -> tuple[Optional[AuthOrchestrator], dict[str, Any]]:
     """
     Returns (orchestrator|None, status_meta).
-    Real profiles without credentials → WAITING_FOR_AUTH, not mock success.
+
+    Real profiles:
+      - missing credentials → WAITING_FOR_AUTH (not mock)
+      - credentials present but no browser → orchestrator built with
+        provider_kind=real and allow_registration=False so run_two_users
+        returns WAITING_FOR_AUTH / BROWSER_UNAVAILABLE (wiring proven, no fake sessions)
     """
     kind = resolve_provider_kind(auth_profile)
     meta: dict[str, Any] = {"auth_profile": auth_profile, "provider_kind": kind}
@@ -67,6 +73,8 @@ def build_orchestrator(
             mailbox=mb,
             auth=auth,
             target=target,
+            provider_kind="mock",
+            allow_registration=True,  # mock lab does not need real browser
         )
         return orch, {**meta, "status": "ok", "reason": "mock_ready"}
 
@@ -78,25 +86,23 @@ def build_orchestrator(
                 "status": "WAITING_FOR_AUTH",
                 "reason": "missing_mailslurp_api_key",
             }
-        # Real registration/browser not available in default GHA → still can create mailboxes;
-        # AuthProvider remains mock login against lab unless browser wired.
-        # Fail closed for full auto-register: browser unavailable.
-        if not os.environ.get("BROWSER_MCP_ENABLED"):
-            return None, {
-                **meta,
-                "status": "WAITING_FOR_AUTH",
-                "reason": "BROWSER_UNAVAILABLE",
-                "mailbox_provider": "mailslurp",
-                "detail": "MailSlurp key present but real browser registration not enabled",
-            }
+        browser_ok = bool(os.environ.get("BROWSER_MCP_ENABLED")) or force_allow_registration
         auth = MockAuthProvider(mailbox=mb, require_otp=True)
         orch = AuthOrchestrator(
             identity_provider=MockIdentityProvider(),
-            mailbox=mb,
+            mailbox=mb,  # REAL MailSlurp instance wired here
             auth=auth,
             target=target,
+            provider_kind="mailslurp",
+            allow_registration=browser_ok,
         )
-        return orch, {**meta, "status": "ok", "reason": "mailslurp_browser_enabled"}
+        return orch, {
+            **meta,
+            "status": "ok" if browser_ok else "mailbox_ready_browser_blocked",
+            "reason": "mailslurp_wired",
+            "browser_enabled": browser_ok,
+            "mailbox_class": type(mb).__name__,
+        }
 
     if kind == "temp":
         mb = TempMailboxProvider()
@@ -106,20 +112,22 @@ def build_orchestrator(
                 "status": "WAITING_FOR_AUTH",
                 "reason": "missing_temp_mail_base_url",
             }
-        if not os.environ.get("BROWSER_MCP_ENABLED"):
-            return None, {
-                **meta,
-                "status": "WAITING_FOR_AUTH",
-                "reason": "BROWSER_UNAVAILABLE",
-                "mailbox_provider": "temp",
-            }
+        browser_ok = bool(os.environ.get("BROWSER_MCP_ENABLED")) or force_allow_registration
         auth = MockAuthProvider(mailbox=mb, require_otp=True)
         orch = AuthOrchestrator(
             identity_provider=MockIdentityProvider(),
-            mailbox=mb,
+            mailbox=mb,  # REAL Temp provider wired here
             auth=auth,
             target=target,
+            provider_kind="temp",
+            allow_registration=browser_ok,
         )
-        return orch, {**meta, "status": "ok", "reason": "temp_browser_enabled"}
+        return orch, {
+            **meta,
+            "status": "ok" if browser_ok else "mailbox_ready_browser_blocked",
+            "reason": "temp_wired",
+            "browser_enabled": browser_ok,
+            "mailbox_class": type(mb).__name__,
+        }
 
     return None, {**meta, "status": "WAITING_FOR_AUTH", "reason": "unsupported_provider"}

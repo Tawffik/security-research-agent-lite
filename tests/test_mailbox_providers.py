@@ -41,14 +41,21 @@ def test_mailslurp_missing_key_waits():
         assert meta["reason"] == "missing_mailslurp_api_key"
 
 
-def test_mailslurp_key_without_browser_waits():
+def test_mailslurp_key_wires_provider_but_run_waits_without_browser():
     with patch.dict("os.environ", {"MAILSLURP_API_KEY": "test-key-not-real"}):
         import os
 
         os.environ.pop("BROWSER_MCP_ENABLED", None)
         orch, meta = build_orchestrator("two_test_users_mailslurp")
-        assert orch is None
-        assert meta["reason"] == "BROWSER_UNAVAILABLE"
+        assert orch is not None
+        assert meta["mailbox_class"] == "MailSlurpMailboxProvider"
+        assert orch.provider_kind == "mailslurp"
+        assert isinstance(orch.mailbox, __import__("agent_lite.auth.mailslurp", fromlist=["MailSlurpMailboxProvider"]).MailSlurpMailboxProvider)
+        res = orch.run_two_users()
+        assert res.status == "WAITING_FOR_AUTH"
+        assert res.reason == "BROWSER_UNAVAILABLE"
+        # must NOT inject mock OTP path
+        assert not any(e.get("step") == "otp_inject" and e.get("status") == "mock_only" for e in res.trace)
 
 
 def test_temp_missing_base_url():
@@ -104,3 +111,26 @@ def test_no_silent_fallback_from_real_to_mock():
     # without key → not mock orchestrator
     assert orch is None
     assert meta.get("provider_kind") == "mailslurp"
+
+
+def test_orchestrator_never_injects_on_real_kind():
+    from agent_lite.auth.orchestrator import AuthOrchestrator
+    from agent_lite.auth.mailbox import MockMailboxProvider
+    from agent_lite.auth.auth_provider import MockAuthProvider
+    from agent_lite.auth.identity_provider import MockIdentityProvider
+
+    mb = MockMailboxProvider()
+    # force provider_kind real while using mock mailbox object — inject must still be off
+    orch = AuthOrchestrator(
+        identity_provider=MockIdentityProvider(),
+        mailbox=mb,
+        auth=MockAuthProvider(mailbox=mb),
+        provider_kind="mailslurp",
+        allow_registration=True,
+    )
+    # even with allow_registration, inject_otps default False for non-mock kind
+    res = orch.run_two_users(inject_otps=None)
+    # without injected OTP, wait finds nothing → WAITING or OTP_NOT_FOUND
+    assert res.status in ("WAITING_FOR_AUTH", "blocked", "ok")
+    inject_steps = [e for e in res.trace if e.get("step") == "otp_inject" and e.get("status") == "mock_only"]
+    assert inject_steps == []
