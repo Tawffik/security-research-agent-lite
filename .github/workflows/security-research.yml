@@ -43,6 +43,13 @@ on:
           - public
           - shared
           - ambiguous
+      auth_profile:
+        description: "two_test_users runs mock OTP identity bootstrap (offline-safe)"
+        type: choice
+        default: ""
+        options:
+          - ""
+          - two_test_users
       require_llm:
         description: "Fail if OPENROUTER_API_KEY / LLM_API_KEY missing"
         type: boolean
@@ -83,6 +90,10 @@ jobs:
           fi
           if [ "${{ inputs.require_llm }}" = "true" ]; then
             ARGS+=(--require-llm)
+          fi
+          AUTH="${{ inputs.auth_profile }}"
+          if [ -n "$AUTH" ]; then
+            ARGS+=(--auth-profile "$AUTH")
           fi
           python -m agent_lite.cli "${ARGS[@]}"
       - name: Upload results

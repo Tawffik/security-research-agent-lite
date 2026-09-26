@@ -50,6 +50,7 @@ def main(argv: list[str] | None = None) -> int:
     )
     p.add_argument("--model", default="", help="Override model id")
     p.add_argument("--health-check", action="store_true")
+    p.add_argument("--auth-profile", default="", help="two_test_users | empty")
     p.add_argument("--repo-root", default=".")
     args = p.parse_args(argv)
 
@@ -131,6 +132,33 @@ def main(argv: list[str] | None = None) -> int:
         llm_provider=llm,
         require_llm=args.require_llm,
     )
+
+    auth_meta = {}
+    if getattr(args, "auth_profile", "") == "two_test_users":
+        from agent_lite.auth.orchestrator import AuthOrchestrator
+        import json as _json
+        orch = AuthOrchestrator(target="lab://synthetic")
+        auth_res = orch.run_two_users()
+        auth_meta = auth_res.to_dict()
+        art0 = Path(args.artifacts_dir) / engagement_id
+        art0.mkdir(parents=True, exist_ok=True)
+        (art0 / "auth_trace.json").write_text(
+            _json.dumps(
+                {
+                    "status": auth_res.status,
+                    "state": auth_res.state,
+                    "identities": auth_res.identities,
+                    "sessions": auth_res.sessions,
+                    "trace": auth_res.trace,
+                    "reason": auth_res.reason,
+                },
+                indent=2,
+            )
+        )
+        (art0 / "identities.json").write_text(_json.dumps(auth_res.identities, indent=2))
+        if auth_res.status != "ok":
+            print(_json.dumps({"status": auth_res.status, "auth": auth_meta}, indent=2))
+            return 7 if auth_res.status == "WAITING_FOR_AUTH" else 8
 
     if args.mode in ("synthetic", "analysis"):
         scenarios = {

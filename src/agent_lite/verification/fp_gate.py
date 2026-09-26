@@ -58,6 +58,9 @@ class FalsePositiveGate:
         action_ok = bool(facts.get("action_authorized"))
         eids_ok = len(eids) >= 2
         actor_res = bool(facts.get("multi_identity")) and bool(facts.get("has_resource_or_object"))
+        # no identity sessions → cannot claim confirmed authz violation
+        if facts.get("require_authenticated_identity") and not facts.get("identity_authenticated"):
+            actor_res = False
         public = bool(facts.get("public_marker"))
         shared = bool(facts.get("shared_acl"))
         private = bool(facts.get("private_fields"))
