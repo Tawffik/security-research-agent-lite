@@ -1,16 +1,19 @@
-"""Deterministic hypothesis engine — observation → property → suspected violation."""
+"""Hypothesis from Opportunity + Invariant — not from lab answer keys."""
 
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass, field
 from typing import Any, Optional
 
+from agent_lite.opportunities.engine import Opportunity
+from agent_lite.security.invariants import InvariantRegistry
 from agent_lite.target.context import TargetContext
 
 
 @dataclass
 class Hypothesis:
     hypothesis_id: str
+    opportunity_id: str
     target: str
     security_property: str
     claim: str
@@ -18,13 +21,14 @@ class Hypothesis:
     suspected_violation: str
     required_identity: str
     relevant_resource: str
-    evidence_required: list[str] = field(default_factory=list)
-    competing_explanations: list[str] = field(default_factory=list)
+    evidence_required: list = field(default_factory=list)
+    competing_explanations: list = field(default_factory=list)
     proposed_experiment: str = ""
     risk: str = "low"
     budget: float = 0.3
     status: str = "open"
-    provenance: str = "deterministic_authz"
+    provenance: str = "hypothesis_engine"
+    invariant_id: str = "INV-AUTHZ-001"
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -34,52 +38,54 @@ class HypothesisEngine:
     def __init__(self, engagement_id: str):
         self.engagement_id = engagement_id
         self._n = 0
+        self.invariants = InvariantRegistry()
 
-    def generate(self, ctx: TargetContext) -> list[Hypothesis]:
-        hyps: list[Hypothesis] = []
-        if not ctx.multi_identity:
-            return hyps
-        for ep in ctx.object_endpoints:
-            method = str(ep.get("method") or "GET")
-            path = str(ep.get("path") or "")
-            # Skip pure health/public markers
-            if path in ("/health", "/") or "catalog" in path.lower():
-                # public catalog may still get a weak hyp — better: skip for BOLA primary
-                if "catalog" in path.lower():
-                    continue
+    def from_opportunities(self, opps: list, ctx: TargetContext) -> list:
+        inv = self.invariants.authz_object()
+        hyps = []
+        for opp in opps:
+            if opp.status != "open":
+                continue
+            if "multi_identity" not in opp.signals:
+                continue
             self._n += 1
-            hid = f"H-{self._n:03d}"
-            resource = "object"
-            if ctx.resources:
-                resource = str(ctx.resources[0].get("name") or "object")
+            resource = opp.related_resources[0] if opp.related_resources else "object"
             hyps.append(
                 Hypothesis(
-                    hypothesis_id=hid,
-                    target=f"{method} {path} @ {ctx.primary_host}",
-                    security_property="Only the authorized owner may access the object resource",
-                    claim=f"Non-owner may access {path} object without ownership binding",
-                    expected_behavior="Non-owner receives 403/404 or empty non-sensitive denial",
-                    suspected_violation="Missing object-level authorization (BOLA/IDOR)",
-                    required_identity="two authenticated identities (owner + non-owner)",
+                    hypothesis_id=f"H-{self._n:03d}",
+                    opportunity_id=opp.opportunity_id,
+                    target=opp.target,
+                    security_property=inv.statement,
+                    claim=(
+                        f"Observation path may violate {inv.invariant_id}: "
+                        f"non-owner access to protected object via {opp.target}"
+                    ),
+                    expected_behavior=(
+                        "Non-owner is denied (4xx) or receives no private owner-bound fields"
+                    ),
+                    suspected_violation=f"Possible violation of {inv.invariant_id}",
+                    required_identity="owner + non-owner authenticated identities",
                     relevant_resource=resource,
                     evidence_required=[
                         "owner_baseline_response",
                         "non_owner_response",
-                        "identity_proof",
-                        "ownership_marker_or_denial",
+                        "identity_binding",
+                        "ownership_or_denial_marker",
                     ],
                     competing_explanations=[
                         "Resource is intentionally public",
                         "Resource is shared via ACL by design",
                         "Role grants broader access than ownership",
-                        "Response is cached/shared without private fields",
+                        "Response lacks private fields (false correlation on status)",
+                        "Cache/shared edge artifact without authz failure",
                     ],
                     proposed_experiment=(
-                        "Cross-identity differential: request same object id as owner then non-owner; "
-                        "compare status + sensitive fields; do not rely on status alone"
+                        "Discriminating cross-identity request on same object id; "
+                        "compare status AND sensitive fields; single pair not ID spray"
                     ),
-                    risk="low" if method == "GET" else "medium",
+                    risk="low",
                     budget=0.25,
+                    invariant_id=inv.invariant_id,
                 )
             )
         return hyps

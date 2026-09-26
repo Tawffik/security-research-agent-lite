@@ -9,18 +9,24 @@ from pathlib import Path
 
 from agent_lite.runtime.pipeline import ResearchPipeline
 from agent_lite.skills.authz_bola import (
+    bola_ambiguous_status_only,
     bola_negative_public,
     bola_negative_secure,
+    bola_negative_shared,
     bola_positive_lab,
 )
 
 
 def main(argv: list[str] | None = None) -> int:
     p = argparse.ArgumentParser(description="Security Research Agent Lite")
-    p.add_argument("--recon", required=True, help="Path to recon JSON artifact")
+    p.add_argument("--recon", required=True)
     p.add_argument("--scope", default="config/scope.yaml")
     p.add_argument("--engagement-id", default="eng_cli")
-    p.add_argument("--scenario", choices=["positive", "secure", "public"], default="positive")
+    p.add_argument(
+        "--scenario",
+        choices=["positive", "secure", "public", "shared", "ambiguous"],
+        default="positive",
+    )
     p.add_argument("--artifacts-dir", default="artifacts")
     args = p.parse_args(argv)
 
@@ -28,6 +34,8 @@ def main(argv: list[str] | None = None) -> int:
         "positive": bola_positive_lab(),
         "secure": bola_negative_secure(),
         "public": bola_negative_public(),
+        "shared": bola_negative_shared(),
+        "ambiguous": bola_ambiguous_status_only(),
     }
     pipe = ResearchPipeline(
         engagement_id=args.engagement_id,
@@ -36,10 +44,6 @@ def main(argv: list[str] | None = None) -> int:
     )
     result = pipe.run(args.recon, scenario=scenarios[args.scenario])
     print(json.dumps(result.to_dict(), indent=2))
-    if result.verdict and result.verdict.status == "CONFIRMED":
-        return 0
-    if result.verdict and result.verdict.status == "REJECTED":
-        return 0
     return 0
 
 
