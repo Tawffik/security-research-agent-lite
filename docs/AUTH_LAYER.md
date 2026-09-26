@@ -1,17 +1,35 @@
 # Authenticated testing layer
 
-## Abstractions
-- `TestIdentity` / `IdentityProvider`
-- `MailboxProvider` + OTP extract (no LLM)
-- `AuthProvider` + state machine
-- `SessionHandle` (secrets stay in provider memory)
-- `AuthOrchestrator` (`auth_profile=two_test_users`)
+## Profiles (`--auth-profile` / GHA)
+
+| Profile | Behavior |
+|---------|----------|
+| `two_test_users` / `two_test_users_mock` | Offline Mock OTP + sessions |
+| `two_test_users_mailslurp` | Requires `MAILSLURP_API_KEY` **and** `BROWSER_MCP_ENABLED` |
+| `two_test_users_temp` | Requires `TEMP_MAIL_BASE_URL` (+ optional key) **and** browser |
+| `manual` | `WAITING_FOR_AUTH` |
+
+**No silent fallback:** requesting mailslurp/temp without secrets → `WAITING_FOR_AUTH`, not mock success.
+
+## Providers
+
+```
+MailboxProvider
+├── MockMailboxProvider          # default CI
+├── MailSlurpMailboxProvider      # optional real inbox
+└── TempMailboxProvider           # configurable HTTP temp-mail API
+```
+
+## Secrets (GitHub Actions)
+
+- `MAILSLURP_API_KEY`
+- `TEMP_MAIL_API_KEY` / `TEMP_MAIL_BASE_URL`
+- `BROWSER_MCP_ENABLED=1` only when a real browser runtime is attached
 
 ## Safety
-OTP, passwords, cookies never in reports, episodes, model_trace, or LLM prompts.
 
-## Mock / CI
-Fully offline. Real mailbox vendors are **not** wired by default.
+OTP, passwords, cookies, API keys never in artifacts / LLM / episodes.
 
-## GHA
-`auth_profile: two_test_users` → `auth_trace.json` + `identities.json` (sanitized).
+## Real authenticated BOLA
+
+**Not claimed complete.** Architecture + MailSlurp/Temp clients exist; full register→OTP→browser→BOLA needs authorized target + browser runtime + working mailbox credentials.

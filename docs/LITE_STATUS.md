@@ -57,3 +57,10 @@ hypotheses.json, experiments.json, evidence.jsonl, decisions.jsonl,
 findings.json, rejected_hypotheses.json, research_episode.json,
 skill_used.json, final-report.md, report.json, ledger.db
 ```
+
+
+## Auth providers (post-acdf610)
+
+- Mock: offline complete
+- MailSlurp / Temp: implemented, opt-in, fail-closed without secrets/browser
+- Real authenticated BOLA: blocked on browser runtime + authorized target

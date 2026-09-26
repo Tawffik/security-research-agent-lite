@@ -50,7 +50,11 @@ def main(argv: list[str] | None = None) -> int:
     )
     p.add_argument("--model", default="", help="Override model id")
     p.add_argument("--health-check", action="store_true")
-    p.add_argument("--auth-profile", default="", help="two_test_users | empty")
+    p.add_argument(
+        "--auth-profile",
+        default="",
+        help="two_test_users_mock|two_test_users_mailslurp|two_test_users_temp|manual",
+    )
     p.add_argument("--repo-root", default=".")
     args = p.parse_args(argv)
 
@@ -134,19 +138,24 @@ def main(argv: list[str] | None = None) -> int:
     )
 
     auth_meta = {}
-    if getattr(args, "auth_profile", "") == "two_test_users":
-        from agent_lite.auth.orchestrator import AuthOrchestrator
+    if getattr(args, "auth_profile", ""):
+        from agent_lite.auth.factory import build_orchestrator
         import json as _json
-        orch = AuthOrchestrator(target="lab://synthetic")
-        auth_res = orch.run_two_users()
-        auth_meta = auth_res.to_dict()
+        orch, sel = build_orchestrator(args.auth_profile, target="lab://synthetic")
         art0 = Path(args.artifacts_dir) / engagement_id
         art0.mkdir(parents=True, exist_ok=True)
+        if orch is None:
+            (art0 / "auth_trace.json").write_text(_json.dumps(sel, indent=2))
+            print(_json.dumps({"status": sel.get("status"), "auth": sel}, indent=2))
+            return 7
+        auth_res = orch.run_two_users()
+        auth_meta = {**sel, **auth_res.to_dict()}
         (art0 / "auth_trace.json").write_text(
             _json.dumps(
                 {
                     "status": auth_res.status,
                     "state": auth_res.state,
+                    "provider_selection": sel,
                     "identities": auth_res.identities,
                     "sessions": auth_res.sessions,
                     "trace": auth_res.trace,

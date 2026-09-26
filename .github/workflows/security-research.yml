@@ -44,12 +44,16 @@ on:
           - shared
           - ambiguous
       auth_profile:
-        description: "two_test_users runs mock OTP identity bootstrap (offline-safe)"
+        description: "Auth profile (mock offline; real providers need secrets + browser)"
         type: choice
         default: ""
         options:
           - ""
+          - two_test_users_mock
           - two_test_users
+          - two_test_users_mailslurp
+          - two_test_users_temp
+          - manual
       require_llm:
         description: "Fail if OPENROUTER_API_KEY / LLM_API_KEY missing"
         type: boolean
@@ -74,6 +78,10 @@ jobs:
           LLM_API_KEY: ${{ secrets.LLM_API_KEY }}
           LLM_BASE_URL: ${{ secrets.LLM_BASE_URL }}
           LLM_MODEL: ${{ secrets.LLM_MODEL }}
+          MAILSLURP_API_KEY: ${{ secrets.MAILSLURP_API_KEY }}
+          TEMP_MAIL_API_KEY: ${{ secrets.TEMP_MAIL_API_KEY }}
+          TEMP_MAIL_BASE_URL: ${{ secrets.TEMP_MAIL_BASE_URL }}
+          BROWSER_MCP_ENABLED: ${{ secrets.BROWSER_MCP_ENABLED }}
         run: |
           set -euo pipefail
           ARGS=(
