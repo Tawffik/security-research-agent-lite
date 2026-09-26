@@ -1,0 +1,4 @@
+max_http_requests: 20
+max_tool_calls: 50
+max_model_calls: 0
+max_wall_seconds: 300

@@ -1,0 +1,4 @@
+engagement_id: eng_lab_001
+program: lab-demo
+mode: lab_fixture
+description: "Synthetic BOLA vertical slice — no live targets"

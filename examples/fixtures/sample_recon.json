@@ -1,0 +1,17 @@
+{
+  "primary_host": "api.acme-demo.test",
+  "technologies": ["nginx", "api"],
+  "endpoints": [
+    {"method": "GET", "path": "/api/orders/{id}"},
+    {"method": "GET", "path": "/api/catalog/item/{id}"},
+    {"method": "GET", "path": "/health"}
+  ],
+  "actors": [
+    {"actor_id": "user_a", "name": "user_a", "type": "user"},
+    {"actor_id": "user_b", "name": "user_b", "type": "user"}
+  ],
+  "resources": [
+    {"name": "order-1001", "type": "object", "owner_actor_id": "user_a"}
+  ],
+  "notes": "synthetic recon for lite agent lab"
+}

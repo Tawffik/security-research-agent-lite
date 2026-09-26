@@ -1,0 +1,13 @@
+skill_id: authz-bola
+version: "0.1.0"
+capability: authorization_object_level
+required_inputs: [target_context, hypothesis]
+outputs: [candidates, evidence_refs, experiment_plan]
+allowed_tools: [lab_observation]
+scope_requirements: [in_scope_host]
+identity_requirements: [two_identities]
+risk: low
+expected_evidence: [owner_response, non_owner_response, ownership_markers]
+stop_conditions: [scope_block, public_shared_confirmed, evidence_sufficient]
+known_false_positives: [public_resources, shared_acl, status_only_diff]
+provenance: "ported concept from full agent + OWASP API1 / field BOLA studies"

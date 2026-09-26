@@ -1,0 +1,5 @@
+profile: authorization_bola
+skills:
+  - authz-bola
+prefer_discriminating_experiments: true
+require_evidence_for_findings: true

@@ -1,0 +1,12 @@
+# Fail-closed scope. Unknown host = BLOCK.
+program: "lab-demo"
+in_scope:
+  - host: "api.acme-demo.test"
+    methods: ["GET", "HEAD", "OPTIONS"]
+    notes: "Synthetic lab only"
+  - host: "*.acme-demo.test"
+    methods: ["GET"]
+out_of_scope:
+  - "*.production.example"
+max_risk: medium
+allow_mutations: false

@@ -1,0 +1,31 @@
+name: Security Research
+on:
+  workflow_dispatch:
+    inputs:
+      engagement_id:
+        default: eng_gha
+      scenario:
+        default: positive
+        type: choice
+        options: [positive, secure, public]
+jobs:
+  research:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -e ".[dev]"
+      - run: pytest -q
+      - run: |
+          python -m agent_lite.cli \
+            --recon examples/fixtures/sample_recon.json \
+            --scope config/scope.yaml \
+            --scenario ${{ inputs.scenario }} \
+            --engagement-id ${{ inputs.engagement_id }} \
+            --artifacts-dir artifacts
+      - uses: actions/upload-artifact@v4
+        with:
+          name: research-artifacts
+          path: artifacts/
