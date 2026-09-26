@@ -1,0 +1,43 @@
+# TEMPLATE ONLY — not a live target.
+# Copy and fill for an authorized Web Security Academy lab.
+# authorized must be true AND live-lab.yml confirm_authorized=AUTHORIZED for any live run.
+# No passwords here. Sessions via GitHub Secrets (TEST_USER_*_COOKIE / _TOKEN).
+
+schema_version: "1.0"
+engagement:
+  id: eng_portswigger_bola_template
+  type: portswigger
+  mode: live_lab
+  authorized: false   # must be flipped explicitly for a real authorized engagement
+
+target:
+  # Example shape only — replace with your authorized lab host
+  base_url: "https://YOUR-LAB-ID.web-security-academy.net"
+
+scope:
+  allowed_hosts:
+    - host: "YOUR-LAB-ID.web-security-academy.net"
+      methods: [GET, HEAD]
+  allowed_schemes: [https]
+  allow_mutations: false
+  out_of_scope:
+    - "*.production.example"
+
+identities:
+  user_a:
+    credential_ref: TEST_USER_A
+    role: owner
+  user_b:
+    credential_ref: TEST_USER_B
+    role: non_owner
+
+experiment:
+  max_requests: 6
+  max_experiments: 1
+  max_response_bytes: 500000
+  timeout_seconds: 15
+  min_delay_seconds: 0.5
+  allowed_methods: [GET]
+  object_path: /YOUR_KNOWN_OBJECT_PATH
+  owner_identity: user_a
+  non_owner_identity: user_b

@@ -41,17 +41,30 @@ jobs:
           echo "Credentials must come from GitHub Secrets (TEST_USER_A_*, TEST_USER_B_*)."
           echo "They are never written to artifacts."
           # Do not print env or secret values.
-      - name: Placeholder live runner
+      - name: Adapter dry-run (no live network unless engagement authorized + secrets present)
         env:
-          # Map secrets into expected credential_ref env vars when configured
           TEST_USER_A_COOKIE: ${{ secrets.TEST_USER_A_COOKIE }}
           TEST_USER_B_COOKIE: ${{ secrets.TEST_USER_B_COOKIE }}
           TEST_USER_A_TOKEN: ${{ secrets.TEST_USER_A_TOKEN }}
           TEST_USER_B_TOKEN: ${{ secrets.TEST_USER_B_TOKEN }}
         run: |
-          echo "Live HTTP path is gated. Synthetic matrix already validated in pytest."
-          echo "PortSwigger lab runner will be enabled only after engagement + lab adapter are present."
-          echo "Unauthorized / missing scope / missing confirmation = no network actions."
+          set -e
+          echo "confirm_authorized=AUTHORIZED received; engagement file present."
+          echo "PortSwiggerAdapter validates engagement fail-closed; live Academy traffic only if"
+          echo "engagement.authorized=true AND secrets supply session material AND operator runs T4."
+          python - <<'PY'
+          from pathlib import Path
+          from agent_lite.http.engagement import load_engagement
+          from agent_lite.labs.portswigger import PortSwiggerAdapter
+          path = Path("${{ github.event.inputs.engagement_config }}")
+          eng = load_engagement(path)
+          result = PortSwiggerAdapter(eng).validate()
+          print(result.to_dict())
+          if eng.authorized and result.status == "READY":
+              print("ENGAGEMENT_READY — operator may proceed with T4 session inject + run_http")
+          else:
+              print("ENGAGEMENT_BLOCKED_OR_TEMPLATE — no live traffic from this step")
+          PY
       - uses: actions/upload-artifact@v4
         if: always()
         with:

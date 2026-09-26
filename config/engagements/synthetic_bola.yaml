@@ -2,7 +2,9 @@
 schema_version: "1.0"
 engagement:
   id: eng_synthetic_bola
+  type: synthetic
   mode: synthetic  # synthetic | live_lab
+  authorized: true  # synthetic local only; not a live PortSwigger target
 
 target:
   base_url: "https://lab.example.test"
