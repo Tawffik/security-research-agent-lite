@@ -9,6 +9,17 @@ Recon artifact → Normalize → Scope → Hypothesis → BOLA skill
   → Evidence → FP Gate → Researcher/Skeptic/Referee → Report
 ```
 
+## BBCI recon
+
+```bash
+python -m agent_lite.cli \
+  --recon examples/fixtures/bbci_recon_sample.json \
+  --scope config/scope.yaml \
+  --scenario positive
+```
+
+See `docs/BBCI_RECON.md` for real artifact drop-in.
+
 ## Quick start
 
 ```bash

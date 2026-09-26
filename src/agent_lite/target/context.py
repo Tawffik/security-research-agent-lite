@@ -16,6 +16,8 @@ class TargetContext:
     actors: list[dict[str, Any]] = field(default_factory=list)
     resources: list[dict[str, Any]] = field(default_factory=list)
     technologies: list[str] = field(default_factory=list)
+    hosts: list[str] = field(default_factory=list)
+    observations: list[dict[str, Any]] = field(default_factory=list)
     notes: str = ""
 
     def to_dict(self) -> dict[str, Any]:
@@ -43,5 +45,7 @@ def build_target_context(engagement_id: str, recon: NormalizedRecon) -> TargetCo
         actors=list(recon.actors),
         resources=list(recon.resources),
         technologies=list(recon.technologies),
+        hosts=list(getattr(recon, "hosts", None) or [recon.primary_host]),
+        observations=list(getattr(recon, "observations", None) or []),
         notes=recon.notes,
     )
