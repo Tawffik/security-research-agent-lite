@@ -5,12 +5,14 @@ Does NOT replace HttpExecutor.
 Does NOT embed vulnerability verdicts.
 Does NOT invent a generic login framework.
 
-Flow:
+Preferred full research path (no parallel verdict logic):
   EngagementConfig (authorized)
-    → ActionRequest (owner + non-owner, one known object)
-    → HttpExecutor
-    → HttpObservation
-    → (caller feeds into ResearchPipeline.run_http or consumes observations)
+    → ResearchPipeline.run_from_engagement(...)
+    → run_http() → HttpExecutor → HttpObservation
+    → Evidence → FP Gate → Researcher/Skeptic/Referee
+
+Low-level helpers only build/validate ActionRequests or return raw
+observations. They never emit CONFIRMED/REJECTED.
 
 Fail closed when authorization conditions are missing.
 """

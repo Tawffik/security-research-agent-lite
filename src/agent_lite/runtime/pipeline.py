@@ -265,6 +265,68 @@ class ResearchPipeline:
             experiment=exp,
         )
 
+    def run_from_engagement(
+        self,
+        recon_path: Union[str, Path],
+        *,
+        engagement: Any,
+        executor: Optional[Any] = None,
+        method: str = "GET",
+    ) -> RunResult:
+        """
+        Single integration path for lab adapters (PortSwigger or generic).
+
+        PortSwiggerAdapter validates authorization → then this method calls
+        run_http() so Evidence / FP Gate / R-S-R stay in one place.
+
+        Does NOT invent a parallel verdict path.
+        Fail-closed when engagement is not authorized.
+        """
+        from agent_lite.http.engagement import EngagementConfig
+        from agent_lite.http.executor import HttpExecutor
+        from agent_lite.labs.portswigger import PortSwiggerAdapter
+
+        if not isinstance(engagement, EngagementConfig):
+            raise TypeError("engagement must be EngagementConfig")
+
+        adapter = PortSwiggerAdapter(engagement, executor=None)
+        gate = adapter.validate()
+        if gate.status == "BLOCKED":
+            self.ledger.record("start", "blocked", ",".join(gate.block_reasons))
+            self.ledger.finish("blocked")
+            return RunResult(
+                engagement_id=self.engagement_id,
+                run_id=self.run_id,
+                scope_allowed=False,
+                mode="http",
+                gate_status="BLOCK",
+                limitations=[
+                    "engagement_authorization_failed",
+                    *gate.block_reasons,
+                ],
+                summary=f"ENGAGEMENT_BLOCKED: {','.join(gate.block_reasons)}",
+            )
+
+        # Known object only — path comes from engagement config, never enumerated
+        if executor is None:
+            idr = engagement.build_identities()
+            executor = HttpExecutor(
+                scope=engagement.build_scope(),
+                budget=engagement.build_budget(),
+                identities=idr,
+                allowed_schemes=set(engagement.allowed_schemes),
+            )
+
+        return self.run_http(
+            recon_path,
+            base_url=engagement.base_url,
+            object_path=engagement.object_path,
+            executor=executor,
+            owner_identity=engagement.owner_identity,
+            non_owner_identity=engagement.non_owner_identity,
+            method=method,
+        )
+
     # ------------------------------------------------------------------
     # Shared internals
     # ------------------------------------------------------------------
