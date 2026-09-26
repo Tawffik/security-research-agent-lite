@@ -24,51 +24,64 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--engagement-id", default="eng_cli")
     p.add_argument(
         "--mode",
-        choices=["synthetic", "http", "engagement"],
+        choices=["synthetic", "http", "engagement", "analysis"],
         default="synthetic",
-        help=(
-            "synthetic = LabScenario (default); "
-            "http = HttpExecutor with explicit base URL; "
-            "engagement = PortSwiggerAdapter.validate → run_from_engagement"
-        ),
+        help="synthetic|http|engagement|analysis (LLM+recon, no live HTTP by default)",
     )
     p.add_argument(
         "--scenario",
         choices=["positive", "secure", "public", "shared", "ambiguous"],
         default="positive",
-        help="Synthetic lab scenario (mode=synthetic only)",
+        help="Synthetic lab scenario (mode=synthetic)",
     )
     p.add_argument("--artifacts-dir", default="artifacts")
-    # HTTP mode options
-    p.add_argument("--http-base-url", default="", help="Base URL for mode=http")
+    p.add_argument("--http-base-url", default="")
     p.add_argument("--http-object-path", default="/api/orders/1001")
     p.add_argument("--http-owner", default="user_a")
     p.add_argument("--http-non-owner", default="user_b")
+    p.add_argument("--http-engagement", default="")
+    p.add_argument("--engagement", default="", help="Engagement YAML for mode=engagement")
+    p.add_argument("--dry-run", action="store_true")
+    p.add_argument("--use-llm", action="store_true", help="Enable LLM hypothesis proposals")
     p.add_argument(
-        "--http-engagement",
-        default="",
-        help="Optional engagement YAML for mode=http executor config",
-    )
-    # Engagement mode (T4 path)
-    p.add_argument(
-        "--engagement",
-        default="",
-        help="Engagement YAML path (required for mode=engagement)",
-    )
-    p.add_argument(
-        "--dry-run",
+        "--require-llm",
         action="store_true",
-        help="mode=engagement: validate authorization only; no HTTP",
+        help="Fail if LLM_API_KEY missing (no mock)",
     )
     args = p.parse_args(argv)
 
+    llm = None
+    llm_status = "llm_disabled"
+    if args.use_llm or args.mode == "analysis" or args.require_llm:
+        from agent_lite.llm.provider import create_llm_provider
+
+        llm, llm_status = create_llm_provider(
+            require_key=args.require_llm,
+            allow_mock=not args.require_llm,
+        )
+        if args.require_llm and llm is None:
+            print(
+                json.dumps(
+                    {
+                        "status": "BLOCKED",
+                        "reason": "missing_llm_api_key",
+                        "message": "Set repository secret LLM_API_KEY (and optional LLM_BASE_URL, LLM_MODEL)",
+                    },
+                    indent=2,
+                )
+            )
+            return 4
+
     pipe = ResearchPipeline(
+        
         engagement_id=args.engagement_id,
         scope_path=args.scope,
         artifacts_dir=Path(args.artifacts_dir),
+        llm_provider=llm,
+        require_llm=args.require_llm,
     )
 
-    if args.mode == "synthetic":
+    if args.mode in ("synthetic", "analysis"):
         scenarios = {
             "positive": bola_positive_lab(),
             "secure": bola_negative_secure(),
@@ -76,8 +89,16 @@ def main(argv: list[str] | None = None) -> int:
             "shared": bola_negative_shared(),
             "ambiguous": bola_ambiguous_status_only(),
         }
-        result = pipe.run(args.recon, scenario=scenarios[args.scenario])
-        print(json.dumps(result.to_dict(), indent=2))
+        # analysis uses secure scenario by default unless scenario set — still runs BOLA loop on recon
+        scen = scenarios.get(args.scenario, bola_positive_lab())
+        if args.mode == "analysis":
+            # Prefer positive local discrimination when multi-identity present; still evidence-driven
+            scen = scenarios.get(args.scenario, bola_positive_lab())
+        result = pipe.run(args.recon, scenario=scen)
+        out = result.to_dict()
+        out["llm_status"] = llm_status
+        out["llm_notes"] = list(getattr(pipe, "llm_notes", []) or [])
+        print(json.dumps(out, indent=2))
         return 0
 
     if args.mode == "engagement":
@@ -86,44 +107,26 @@ def main(argv: list[str] | None = None) -> int:
         from agent_lite.labs.portswigger import PortSwiggerAdapter
 
         if not args.engagement:
-            print("error: --engagement required for mode=engagement", file=sys.stderr)
+            print("error: --engagement required", file=sys.stderr)
             return 2
         eng = load_engagement(args.engagement)
         adapter = PortSwiggerAdapter(eng)
         gate = adapter.validate()
         if args.dry_run:
-            print(
-                json.dumps(
-                    {
-                        "dry_run": True,
-                        "engagement_id": eng.engagement_id,
-                        "authorized": eng.authorized,
-                        "validation": gate.to_dict(),
-                        "object_path": eng.object_path,
-                        "base_url": eng.base_url,
-                        "note": "no HTTP performed",
-                    },
-                    indent=2,
-                )
-            )
+            print(json.dumps({"dry_run": True, "validation": gate.to_dict()}, indent=2))
             return 0 if gate.status == "READY" else 3
-
-        # Live path: still uses run_from_engagement → run_http (no parallel verdict)
         idr = eng.build_identities()
-        # Sessions resolved from env (TEST_USER_*_COOKIE / _TOKEN) inside executor
         executor = HttpExecutor(
             scope=eng.build_scope(),
             budget=eng.build_budget(),
             identities=idr,
             allowed_schemes=set(eng.allowed_schemes),
         )
-        result = pipe.run_from_engagement(
-            args.recon, engagement=eng, executor=executor
-        )
+        result = pipe.run_from_engagement(args.recon, engagement=eng, executor=executor)
         print(json.dumps(result.to_dict(), indent=2))
         return 0
 
-    # mode=http
+    # http
     if not args.http_base_url:
         print("error: --http-base-url required for mode=http", file=sys.stderr)
         return 2
@@ -145,10 +148,7 @@ def main(argv: list[str] | None = None) -> int:
         for iid in (args.http_owner, args.http_non_owner):
             idr.register(Identity(identity_id=iid, credential_ref=f"TEST_{iid.upper()}"))
     executor = HttpExecutor(
-        scope=scope,
-        budget=budget,
-        identities=idr,
-        allowed_schemes={"http", "https"},
+        scope=scope, budget=budget, identities=idr, allowed_schemes={"http", "https"}
     )
     result = pipe.run_http(
         args.recon,

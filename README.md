@@ -46,5 +46,27 @@ python -m agent_lite.cli \
 
 No runtime dependency on the full agent.
 
+## LLM + GitHub Actions
+
+1. Repo **Settings → Secrets → Actions → `LLM_API_KEY`** (optional `LLM_BASE_URL`, `LLM_MODEL`)
+2. **Actions → Security Research → Run workflow**
+3. Inputs: `recon_path`, `scenario`, `use_llm`
+4. Download artifact: `final-report.md`, `findings.json`, `research_episode.json`
+
+```bash
+# Local analysis (mock LLM if no key)
+export LLM_API_KEY=...   # optional
+python -m agent_lite.cli \
+  --recon examples/fixtures/bbci_recon_sample.json \
+  --mode analysis --use-llm \
+  --engagement-id eng_demo
+```
+
+LLM proposes hypotheses only. ScopeGuard / HttpExecutor still gate every external action.
+
+## Skills (initial set)
+
+`authz-bola` · `authentication-session` · `api-business-logic` · `client-side-js` · `web-anomaly`
+
 ## Safety
 Unauthorized / out-of-scope actions: **fail closed**. Target content: **UNTRUSTED_DATA**.

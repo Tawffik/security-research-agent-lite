@@ -66,10 +66,11 @@ class SkillRegistry:
 
     def load_builtin(self, repo_root: Optional[Path] = None) -> None:
         root = repo_root or Path(__file__).resolve().parents[3]
-        meta_path = root / "skills" / "authz-bola" / "metadata.yaml"
-        if meta_path.exists():
-            self.load_from_yaml(meta_path)
-        else:
+        skills_dir = root / "skills"
+        if skills_dir.is_dir():
+            for meta_path in sorted(skills_dir.glob("*/metadata.yaml")):
+                self.load_from_yaml(meta_path)
+        if "authz-bola" not in self._skills:
             self.register(
                 SkillMeta(
                     skill_id="authz-bola",

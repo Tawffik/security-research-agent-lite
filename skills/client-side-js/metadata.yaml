@@ -1,0 +1,13 @@
+skill_id: client-side-js
+version: "0.1.0"
+capability: client_side_js
+required_inputs: [target_context, hypothesis]
+outputs: [candidates, evidence_refs]
+allowed_tools: [lab_observation]
+scope_requirements: [in_scope_host]
+identity_requirements: []
+risk: low
+expected_evidence: [script_url, sink_source_note]
+stop_conditions: [scope_block]
+known_false_positives: [framework_noise]
+provenance: "lite skill contract — analysis only"

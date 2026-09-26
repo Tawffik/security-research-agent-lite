@@ -1,0 +1,13 @@
+skill_id: web-anomaly
+version: "0.1.0"
+capability: web_anomaly
+required_inputs: [target_context, hypothesis]
+outputs: [candidates, evidence_refs]
+allowed_tools: [lab_observation]
+scope_requirements: [in_scope_host]
+identity_requirements: []
+risk: low
+expected_evidence: [anomaly_observation, baseline]
+stop_conditions: [scope_block]
+known_false_positives: [cdn_noise, intentional_error_pages]
+provenance: "lite skill contract"

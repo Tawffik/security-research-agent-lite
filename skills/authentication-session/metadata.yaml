@@ -1,0 +1,13 @@
+skill_id: authentication-session
+version: "0.1.0"
+capability: authentication_session
+required_inputs: [target_context, hypothesis]
+outputs: [candidates, evidence_refs]
+allowed_tools: [lab_observation, http_bounded]
+scope_requirements: [in_scope_host]
+identity_requirements: [session_or_credential]
+risk: low
+expected_evidence: [session_binding, login_response, cookie_flags]
+stop_conditions: [scope_block, evidence_sufficient]
+known_false_positives: [intentional_public_login, shared_demo_accounts]
+provenance: "lite skill contract — not full auth engine"

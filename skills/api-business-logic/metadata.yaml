@@ -1,0 +1,13 @@
+skill_id: api-business-logic
+version: "0.1.0"
+capability: api_business_logic
+required_inputs: [target_context, hypothesis]
+outputs: [candidates, evidence_refs]
+allowed_tools: [lab_observation, http_bounded]
+scope_requirements: [in_scope_host]
+identity_requirements: []
+risk: low
+expected_evidence: [request_response_pair, rule_violation_marker]
+stop_conditions: [scope_block, budget_exhausted]
+known_false_positives: [client_only_validation_documented]
+provenance: "lite skill contract"

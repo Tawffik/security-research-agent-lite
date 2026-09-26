@@ -94,6 +94,8 @@ class ResearchPipeline:
         scope_path: Union[str, Path],
         artifacts_dir: Optional[Path] = None,
         run_id: Optional[str] = None,
+        llm_provider: Any = None,
+        require_llm: bool = False,
     ):
         self.engagement_id = engagement_id
         self.run_id = run_id or f"run_{uuid.uuid4().hex[:10]}"
@@ -102,6 +104,9 @@ class ResearchPipeline:
         self.artifacts_dir.mkdir(parents=True, exist_ok=True)
         self.ledger = SQLiteLedger(self.artifacts_dir / "ledger.db", self.run_id, engagement_id)
         self.evidence = EvidenceStore(engagement_id)
+        self.llm_provider = llm_provider
+        self.require_llm = require_llm
+        self.llm_notes: list[str] = []
 
     # ------------------------------------------------------------------
     # Public entry points
@@ -124,6 +129,7 @@ class ResearchPipeline:
             return scope_block
 
         opps, hyps = self._opportunities_and_hypotheses(ctx)
+        hyps = self._llm_enrich(ctx, hyps)
         scenario = scenario or bola_positive_lab(ctx.primary_host)
         for obs in scenario.observations:
             wrap_untrusted(obs.body, source="lab_response")
@@ -172,6 +178,7 @@ class ResearchPipeline:
             return scope_block
 
         opps, hyps = self._opportunities_and_hypotheses(ctx)
+        hyps = self._llm_enrich(ctx, hyps)
         hyp = hyps[0] if hyps else None
         exp_id = "EXP-HTTP-001"
         url = base_url.rstrip("/") + object_path
@@ -363,6 +370,57 @@ class ResearchPipeline:
             self._write_artifacts(result, ctx, recon)
             return recon, ctx, result
         return recon, ctx, None
+
+
+    def _llm_enrich(self, ctx: TargetContext, hyps: list) -> list:
+        """Optional LLM proposals; never executes HTTP. Fail-closed if require_llm."""
+        if self.llm_provider is None:
+            if self.require_llm:
+                self.llm_notes.append("missing_llm_api_key")
+            return hyps
+        try:
+            from agent_lite.llm.reasoning import propose_hypotheses
+            from agent_lite.skills.router import SkillRouter
+            from agent_lite.hypotheses.engine import Hypothesis
+
+            resp = propose_hypotheses(self.llm_provider, ctx)
+            self.llm_notes.append(f"llm:{resp.status}:{resp.reason or resp.model}")
+            self.ledger.record("llm", resp.status, resp.model or resp.reason)
+            if resp.status != "ok":
+                if self.require_llm:
+                    self.llm_notes.append("llm_unavailable")
+                return hyps
+            router = SkillRouter()
+            proposals = router.from_llm_hypotheses(resp.structured or {})
+            # Attach as extra hypotheses (candidates), keep existing deterministic ones first
+            extra = []
+            for i, pr in enumerate(proposals[:3], start=1):
+                extra.append(
+                    Hypothesis(
+                        hypothesis_id=f"H-LLM-{i:03d}",
+                        opportunity_id="llm",
+                        target=ctx.primary_host,
+                        security_property=pr.get("security_property") or "candidate",
+                        claim=pr.get("claim") or "LLM proposed investigation",
+                        expected_behavior="Evidence-backed validation required",
+                        suspected_violation=pr.get("claim") or "",
+                        required_identity="as skill requires",
+                        relevant_resource="from_context",
+                        evidence_required=["observation", "identity_binding"],
+                        competing_explanations=["benign design", "public resource", "insufficient data"],
+                        proposed_experiment="skill:" + str(pr.get("skill_id")),
+                        risk="low",
+                        budget=0.2,
+                        status="open",
+                        provenance="llm_proposal",
+                    )
+                )
+            # Write llm artifact side-channel via notes
+            self.llm_notes.append(f"proposals:{len(extra)}")
+            return list(hyps) + extra
+        except Exception as e:  # noqa: BLE001
+            self.llm_notes.append(f"llm_error:{type(e).__name__}")
+            return hyps
 
     def _opportunities_and_hypotheses(self, ctx: TargetContext):
         opps = OpportunityEngine(self.engagement_id).extract(ctx)
@@ -623,3 +681,6 @@ class ResearchPipeline:
         (d / "skill_used.json").write_text(
             json.dumps(meta.to_dict() if meta else {"skill_id": "authz-bola"}, indent=2)
         )
+        if self.llm_notes:
+            (d / "llm_notes.json").write_text(json.dumps({"notes": self.llm_notes}, indent=2))
+
