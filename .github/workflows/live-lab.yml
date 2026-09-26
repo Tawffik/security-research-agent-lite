@@ -1,0 +1,60 @@
+# Authorized live-lab execution only.
+# NEVER runs on push. Requires explicit workflow_dispatch + secrets + engagement config.
+name: Live Lab (explicit dispatch only)
+
+on:
+  workflow_dispatch:
+    inputs:
+      engagement_config:
+        description: "Path to engagement YAML under config/engagements/"
+        required: true
+        default: "config/engagements/synthetic_bola.yaml"
+      engagement_id:
+        description: "Engagement id"
+        required: true
+        default: "eng_live_dispatch"
+      confirm_authorized:
+        description: "Type AUTHORIZED to confirm scope and authorization"
+        required: true
+        default: ""
+
+jobs:
+  live:
+    runs-on: ubuntu-latest
+    # Fail closed if confirmation missing
+    if: ${{ github.event.inputs.confirm_authorized == 'AUTHORIZED' }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install
+        run: pip install -e ".[dev]"
+      - name: Unit + synthetic suite (always)
+        run: pytest -q
+      - name: Guard — require engagement file
+        run: |
+          test -f "${{ github.event.inputs.engagement_config }}"
+          echo "Engagement config present"
+      - name: Note on secrets
+        run: |
+          echo "Credentials must come from GitHub Secrets (TEST_USER_A_*, TEST_USER_B_*)."
+          echo "They are never written to artifacts."
+          # Do not print env or secret values.
+      - name: Placeholder live runner
+        env:
+          # Map secrets into expected credential_ref env vars when configured
+          TEST_USER_A_COOKIE: ${{ secrets.TEST_USER_A_COOKIE }}
+          TEST_USER_B_COOKIE: ${{ secrets.TEST_USER_B_COOKIE }}
+          TEST_USER_A_TOKEN: ${{ secrets.TEST_USER_A_TOKEN }}
+          TEST_USER_B_TOKEN: ${{ secrets.TEST_USER_B_TOKEN }}
+        run: |
+          echo "Live HTTP path is gated. Synthetic matrix already validated in pytest."
+          echo "PortSwigger lab runner will be enabled only after engagement + lab adapter are present."
+          echo "Unauthorized / missing scope / missing confirmation = no network actions."
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: live-lab-artifacts
+          path: artifacts/
+          if-no-files-found: ignore

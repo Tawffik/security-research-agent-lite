@@ -1,83 +1,125 @@
-# REPAIR AUDIT — security-research-agent-lite
+# REPAIR AUDIT — security-research-agent-lite (Post-e81debd)
 
 **Date:** 2026-09-26  
-**Source of truth:** Notion «Small Security Research Agent — Standalone MVP Specification» + actual repo `79bd814`
+**Commit under audit:** `e81debd` — *fix: evidence-driven BOLA path without pre-known lab verdicts*  
+**Sources of truth:** Notion «🧩 Small Security Research Agent — Standalone MVP Specification» + actual repository state
 
-## Current State
-Vertical slice exists and tests pass (7). Loop runs end-to-end on synthetic fixtures. Architecture files minimal.
+---
 
-## What Already Works
-- ReconAdapter (host/endpoints/actors/resources normalize)
-- ScopeGuard fail-closed on unknown host
-- Content isolation flags (UNTRUSTED_DATA)
-- Evidence store with polarity
-- FP gate structure (10 questions)
-- VerificationLoop returns CONFIRMED/REJECTED/NEED_MORE_EVIDENCE
-- Artifact writers + CLI + GHA skeletons
-- Positive/secure/public lab scenarios produce expected *test* outcomes
+## CURRENT STATE
 
-## What Is Simulated
-- Lab fixtures inject HTTP-like observations (no live HTTP)
-- Ledger is JSON file, not SQLite
-- No real ModelProvider (N/A for baseline)
-- Scope checked once per run, not per experiment action in a multi-action path
+Vertical slice is **evidence-driven and synthetic-lab complete**.  
+13 tests green. Pipeline produces CONFIRMED / REJECTED / NEED_MORE_EVIDENCE from observations only (no lab answer key).
 
-## What Is Real
-- Deterministic schemas and pipeline orchestration
-- Scope policy YAML
-- Independent package (no full-agent import)
+```
+Recon → Opportunity → Hypothesis + INV-AUTHZ-001 → Experiment
+  → Observations (synthetic) → Evidence → FP Gate → R/S/R → Report + SQLite ledger
+```
 
-## What Is Incorrect (critical)
-1. **Pre-known verdict coupling:** `LabScenario.suggests_authz_issue` is passed into gate/verification as if it were evidence. Lab must not tell the engine the answer.
-2. **Missing Opportunity layer:** Recon → Hypothesis skips Opportunity.
-3. **No Security Invariant object:** Hypotheses are free-form claims, not INV-bound.
-4. **No Experiment abstraction:** Observations are recorded without experiment_id/objective/result contract.
-5. **FP Gate answers are pipeline-fed booleans** derived partly from scenario flag, not solely from observation-derived facts + evidence_refs.
-6. **Object detection** is path-substring only (`{id}` / `id` in path).
-7. **No Actor–Resource–Endpoint relationship model** beyond loose lists.
-8. **Ledger** is not SQLite; no checkpoint/resume API.
+**Still missing for this milestone:** real bounded HTTP execution path.
 
-## What Is Missing
-- Opportunity model + generator
-- Invariant registry (INV-AUTHZ-001)
-- Experiment model + executor boundary
-- Per-action ScopeGuard for experiment steps
-- Shared-ACL scenario test
-- Ambiguous / false-correlation tests
-- Evidence-backed gate answers with evidence_refs
-- Finding full contract
-- BBCI live.txt contract path (partially conceptual only)
+---
 
-## Coupled
-- `pipeline.run` tightly couples scenario → gate → verdict via `suggests_authz_issue`
-- Skill module owns both lab data *and* body heuristics used as research logic (acceptable if heuristics are observation parsers, not verdict injectors)
+## ALREADY IMPLEMENTED (do not rebuild)
 
-## Must Reimplement
-- Pipeline observation→evidence→reasoning path without scenario truth flag
-- Hypothesis from Opportunity + Invariant
-- Experiment records
-- FP Gate evidence refs
+| Component | Status | Notes |
+|-----------|--------|-------|
+| ReconAdapter | Done | Normalizes host/endpoints/actors/resources; validates |
+| ScopeGuard | Done | Fail-closed unknown host; method checks; used at run + per-obs |
+| Content isolation | Done | `wrap_untrusted` / UNTRUSTED_DATA |
+| Opportunity layer | Done | `OpportunityEngine` |
+| INV-AUTHZ-001 | Done | `security/invariants.py` |
+| Hypothesis from Opportunity + Invariant | Done | No free-form claims only |
+| Experiment abstraction | Done | `Experiment` model with objective / actual / evidence |
+| Observation-driven facts | Done | No `suggests_authz_issue` in reasoning path |
+| Evidence store + polarity | Done | |
+| FP Gate with evidence_refs | Done | 10 questions, facts from observations |
+| Researcher / Skeptic / Referee | Done | Separate roles in `VerificationLoop` |
+| SQLite ledger + checkpoint | Done | `sqlite_ledger.py` |
+| Positive / secure / public / shared / ambiguous labs | Done | Synthetic fixtures |
+| Report + artifacts | Done | findings, evidence.jsonl, final-report.md |
+| GHA synthetic E2E | Done | `security-research.yml` |
+| Independent package | Done | No runtime import of Full Agent |
 
-## Reuse Conceptually (from Full Agent)
-- Scope fail-closed, isolation, polarity, R/S/R, FP checklist, artifact names, BOLA competing explanations
+---
 
-## Deferred
-Full JEV, Target Graph DB, LLM, browser, skill evolution, second recon engine
+## PARTIALLY IMPLEMENTED
 
-## Risk Assessment
-High: false confidence in “research” that already knows the lab answer.  
-Medium: scope only once.  
-Low: JSON ledger loss on crash.
+| Item | Gap |
+|------|-----|
+| ScopeGuard | Applied per observation host/method, but **not** yet behind a real ActionRequest → Policy → Identity → Risk → Budget → HTTP Executor pipeline |
+| Experiment | Records synthetic observations; no real HTTP executor boundary |
+| Identity | Lab strings `user_a` / `user_b` only; no Credential-ref resolution layer |
+| Budget | Config exists (`config/budget.yaml`); not enforced per request at executor |
+| Redaction | Bodies truncated in evidence; no systematic header/cookie/token redaction |
+| BBCI adapter | Basic normalize; no versioned schema_version contract yet |
+| Checkpoint resume | Recorded; full safe re-entry of target-affecting steps not fully proven under interruption |
 
-## Repair Order
-1. Audit (this doc)
-2. Remove pre-known verdict from reasoning
-3. Invariants + Opportunity
-4. Experiment abstraction
-5. Observation-only BOLA investigation
-6. Evidence-backed FP Gate
-7. Clear R/S/R separation
-8. Recon contract notes
-9. SQLite ledger + checkpoint
-10. E2E tests expanded + GHA
+---
 
+## MISSING (required for Real HTTP BOLA milestone)
+
+1. **HTTP Executor contract** (bounded, structured Observation return)
+2. **ActionRequest → Policy → ScopeGuard → IdentityResolver → Risk → Budget → Execute** boundary
+3. **Identity vs Credential separation** (credential_ref only; secrets never in ledger/evidence/artifacts)
+4. **Request/response redaction** (Authorization, Cookie, Set-Cookie, tokens → [REDACTED])
+5. **Budget + rate-limit enforcement** at action level (max_requests, max_response_bytes, min_delay)
+6. **Live-lab engagement configuration** (allowed hosts/schemes/methods/paths, identities, budget)
+7. **Auth session layer** minimal for selected lab (login → session kept inside executor boundary)
+8. **Synthetic HTTP server fixtures** (positive/secure/public/shared/ambiguous) for T2
+9. **Adversarial HTTP response tests** (T3: injection, oversized, misleading status)
+10. **PortSwigger engagement config** (authorized lab only; no answer key)
+11. **GHA live mode** (explicit workflow_dispatch; default = synthetic)
+12. **Report fields** for real BOLA (Actor A/B, Expected vs Observed, Resource, Reproduction)
+
+---
+
+## INCORRECT / UNSAFE (none critical in e81debd)
+
+- Pre-known verdict coupling: **fixed** in e81debd.
+- No “allow everything” fallback: Scope remains fail-closed.
+- Credentials: currently none present (synthetic only) — must stay that way when HTTP is added.
+
+---
+
+## PRIORITY FOR THIS MILESTONE
+
+```
+Correctness > Safety > Authorization/Scope > Evidence integrity >
+Research validity > Reproducibility > State/Resume > Observability >
+Extensibility > Performance > Advanced intelligence
+```
+
+**Target:** Real authorized HTTP observation-driven BOLA (one discriminating experiment), not autonomy expansion.
+
+---
+
+## NON-GOALS (deferred)
+
+Browser/MCP, LLM, JEV, SSRF/SQLi/XSS, large-scale fuzzing, recon engine, vector/graph DB, Redis/Kafka/K8s, Full Agent runtime import.
+
+---
+
+## NEXT ACTIONS (implementation order)
+
+1. Update this audit (done)
+2. Introduce `ActionRequest` + bounded `HttpExecutor` + structured `HttpObservation`
+3. Wire ScopeGuard + Budget + redaction into every execute path
+4. IdentityResolver (credential_ref → session material inside executor only)
+5. T0/T1 unit + component tests for executor/scope/redaction/budget
+6. T2 synthetic HTTP server (positive/secure/public/shared/ambiguous)
+7. T3 adversarial responses
+8. Live-lab engagement YAML + PortSwigger config (authorized lab)
+9. GHA: keep synthetic default; add explicit live dispatch
+10. Upgrade report for real BOLA fields
+11. Sync Notion: Implemented / Changed / Deferred / Limitations / Test results / Next
+
+---
+
+## SAFETY INVARIANTS (must remain 0)
+
+- Unauthorized actions = 0  
+- Out-of-scope actions = 0  
+- Credential leakage into artifacts/logs/ledger/Notion = 0  
+- CONFIRMED never from status-only  
+- Target content never becomes trusted instructions

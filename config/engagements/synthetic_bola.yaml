@@ -1,0 +1,32 @@
+# Live-lab style engagement config (synthetic target via mock transport)
+schema_version: "1.0"
+engagement:
+  id: eng_synthetic_bola
+  mode: synthetic  # synthetic | live_lab
+
+target:
+  base_url: "https://lab.example.test"
+
+scope:
+  allowed_hosts:
+    - host: lab.example.test
+      methods: [GET, HEAD]
+  allowed_schemes: [https, http]
+  allow_mutations: false
+
+identities:
+  user_a:
+    credential_ref: TEST_USER_A
+    role: owner
+  user_b:
+    credential_ref: TEST_USER_B
+    role: non_owner
+
+experiment:
+  max_requests: 10
+  max_experiments: 2
+  max_response_bytes: 500000
+  timeout_seconds: 10
+  min_delay_seconds: 0
+  allowed_methods: [GET]
+  object_path: /api/orders/1001
