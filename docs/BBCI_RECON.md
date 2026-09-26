@@ -37,3 +37,35 @@ python -m agent_lite.cli \
 ## Not invented by adapter
 
 Missing fields stay empty. Adapter never fabricates endpoints, actors, or ownership.
+
+## GitHub Actions: fetch from BugBountyCI run
+
+Workflow **Security Research Agent** inputs:
+
+| Input | Example |
+|-------|---------|
+| `bbci_repo` | `Tawffik/BugBountyCI` |
+| `bbci_run_id` | `36172103533` |
+| `bbci_artifact_id` | `10887715536` (optional) |
+| `bbci_artifact_name` | substring filter (optional) |
+
+Secret (recommended for private cross-repo access):
+
+```
+BBCI_READ_TOKEN
+```
+
+PAT with `actions:read` on BugBountyCI. Falls back to `GITHUB_TOKEN` when the token can read that repo’s artifacts.
+
+Flow:
+
+```
+bbci_run_id / artifact_id
+  → download zip
+  → extract
+  → discover recon JSON
+  → --recon <path>
+  → ResearchPipeline
+```
+
+No recon tools run inside Lite.

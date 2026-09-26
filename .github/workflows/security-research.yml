@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       engagement_id:
-        description: "Engagement (resolves recon from config/engagements/index.yaml)"
+        description: "Engagement (local recon if no BBCI download)"
         required: true
         default: eng_demo
         type: choice
@@ -13,11 +13,27 @@ on:
           - eng_gha
           - eng_sample
       recon_artifact:
-        description: "Optional explicit recon path (overrides engagement map)"
+        description: "Optional local recon path (ignored if BBCI run/artifact set)"
+        required: false
+        default: ""
+      bbci_repo:
+        description: "BugBountyCI GitHub repo (owner/name)"
+        required: false
+        default: "Tawffik/BugBountyCI"
+      bbci_run_id:
+        description: "BugBountyCI Actions run id (e.g. 36172103533)"
+        required: false
+        default: ""
+      bbci_artifact_id:
+        description: "Optional artifact id (e.g. 10887715536)"
+        required: false
+        default: ""
+      bbci_artifact_name:
+        description: "Optional artifact name substring filter"
         required: false
         default: ""
       model_profile:
-        description: "LLM profile: free (auto free models) | mock | or leave free"
+        description: "LLM profile: free | mock"
         required: true
         default: free
         type: choice
@@ -25,7 +41,7 @@ on:
           - free
           - mock
       execution_mode:
-        description: "analysis = recon+LLM+BOLA lab path (safe default)"
+        description: "analysis = recon+LLM+BOLA lab (safe default)"
         required: true
         default: analysis
         type: choice
@@ -33,7 +49,7 @@ on:
           - analysis
           - synthetic
       scenario:
-        description: "Local discrimination scenario (evidence lab)"
+        description: "Local discrimination scenario"
         required: true
         default: positive
         type: choice
@@ -44,7 +60,7 @@ on:
           - shared
           - ambiguous
       auth_profile:
-        description: "Auth profile (mock offline; real providers need secrets + browser)"
+        description: "Auth profile"
         type: choice
         default: ""
         options:
@@ -55,7 +71,7 @@ on:
           - two_test_users_temp
           - manual
       require_llm:
-        description: "Fail if OPENROUTER_API_KEY / LLM_API_KEY missing"
+        description: "Fail if LLM API key missing"
         type: boolean
         default: false
 
@@ -71,6 +87,31 @@ jobs:
         run: pip install -e ".[dev]"
       - name: Tests
         run: pytest -q
+      - name: Fetch BugBountyCI artifact
+        id: bbci
+        if: ${{ inputs.bbci_run_id != '' || inputs.bbci_artifact_id != '' }}
+        env:
+          BBCI_READ_TOKEN: ${{ secrets.BBCI_READ_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts
+          python -m agent_lite.recon.bbci_artifact \
+            --repo "${{ inputs.bbci_repo }}" \
+            --run-id "${{ inputs.bbci_run_id }}" \
+            --artifact-id "${{ inputs.bbci_artifact_id }}" \
+            --artifact-name "${{ inputs.bbci_artifact_name }}" \
+            --work-dir artifacts/bbci_download \
+            | tee artifacts/bbci_resolve.json
+          STATUS=$(python -c "import json; print(json.load(open('artifacts/bbci_resolve.json'))['status'])")
+          if [ "$STATUS" != "ok" ]; then
+            echo "BBCI artifact resolve failed"
+            cat artifacts/bbci_resolve.json
+            exit 1
+          fi
+          RECON=$(python -c "import json; print(json.load(open('artifacts/bbci_resolve.json'))['recon_path'])")
+          echo "recon_path=$RECON" >> "$GITHUB_OUTPUT"
+          echo "Resolved recon: $RECON"
       - name: Research
         env:
           OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
@@ -92,9 +133,10 @@ jobs:
             --artifacts-dir artifacts
             --repo-root .
           )
-          RECON="${{ inputs.recon_artifact }}"
-          if [ -n "$RECON" ]; then
-            ARGS+=(--recon "$RECON")
+          if [ -n "${{ steps.bbci.outputs.recon_path }}" ]; then
+            ARGS+=(--recon "${{ steps.bbci.outputs.recon_path }}")
+          elif [ -n "${{ inputs.recon_artifact }}" ]; then
+            ARGS+=(--recon "${{ inputs.recon_artifact }}")
           fi
           if [ "${{ inputs.require_llm }}" = "true" ]; then
             ARGS+=(--require-llm)
