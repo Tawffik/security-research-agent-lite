@@ -24,6 +24,8 @@ from agent_lite.ledger.sqlite_ledger import SQLiteLedger
 from agent_lite.opportunities.engine import OpportunityEngine
 from agent_lite.recon.adapter import ReconAdapter
 from agent_lite.reporting.report import build_report
+from agent_lite.episode.model import build_episode
+from agent_lite.skills.registry import SkillRegistry
 from agent_lite.scope.guard import ScopeDecision, ScopeGuard
 from agent_lite.skills.authz_bola import (
     LabObservation,
@@ -497,6 +499,9 @@ class ResearchPipeline:
             gate_status=gate.status,
             limitations=limitations,
             hypothesis=hyp.to_dict() if hyp else None,
+            facts=facts,
+            experiments=[experiment.to_dict()],
+            mode=mode,
         )
 
         result = RunResult(
@@ -581,3 +586,40 @@ class ResearchPipeline:
         if result.report:
             (d / "final-report.md").write_text(result.report.get("markdown") or "")
             (d / "report.json").write_text(json.dumps(result.report, indent=2))
+
+        # Rejected hypotheses preserved as research knowledge
+        rejected = []
+        if result.verdict and result.verdict.status in ("REJECTED", "NEED_MORE_EVIDENCE"):
+            for h in result.hypotheses:
+                rejected.append(
+                    {
+                        "hypothesis_id": h.hypothesis_id,
+                        "status": result.verdict.status,
+                        "claim": h.claim,
+                        "reason": result.verdict.reason,
+                    }
+                )
+        (d / "rejected_hypotheses.json").write_text(json.dumps(rejected, indent=2))
+
+        hyp_dict = result.hypotheses[0].to_dict() if result.hypotheses else None
+        episode = build_episode(
+            episode_id=f"EP-{self.run_id}",
+            engagement_id=self.engagement_id,
+            run_id=self.run_id,
+            target=(hyp_dict or {}).get("target") or ctx.primary_host,
+            mode=mode,
+            hypothesis=hyp_dict,
+            experiments=[e.to_dict() for e in result.experiments],
+            evidence_ids=result.evidence_ids,
+            verdict=result.verdict.to_dict() if result.verdict else None,
+            facts=result.facts,
+            skill_id="authz-bola",
+        )
+        (d / "research_episode.json").write_text(json.dumps(episode.to_dict(), indent=2))
+
+        reg = SkillRegistry()
+        reg.load_builtin()
+        meta = reg.get("authz-bola")
+        (d / "skill_used.json").write_text(
+            json.dumps(meta.to_dict() if meta else {"skill_id": "authz-bola"}, indent=2)
+        )
