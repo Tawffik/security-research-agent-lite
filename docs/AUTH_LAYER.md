@@ -1,33 +1,33 @@
 # Authenticated testing layer
 
-## Wiring (important)
+## Wiring
 
 ```
-auth_profile
-  → factory.build_orchestrator()
-  → AuthOrchestrator(mailbox=<Mock|MailSlurp|Temp>, provider_kind=...)
-  → run_two_users()
+auth_profile → factory → AuthOrchestrator(mailbox, provider_kind, browser?)
+                         → run_two_users()
+                         → Session A/B (or WAITING_FOR_AUTH)
 ```
 
-- **Mock** (`two_test_users` / `two_test_users_mock`): injects synthetic OTP, completes sessions offline.
-- **MailSlurp / Temp**: factory **wires the real mailbox class** into the orchestrator.
-  - Missing credentials → `WAITING_FOR_AUTH` (no mock fallback).
-  - Credentials present, no browser → orchestrator runs and returns `WAITING_FOR_AUTH` / `BROWSER_UNAVAILABLE` (no fake sessions, no OTP inject).
-  - Full register→OTP→login needs `BROWSER_MCP_ENABLED` + authorized target (not available in default GHA).
+## Browser
+
+| Runtime | Status |
+|---------|--------|
+| **FakeAuthBrowserProvider** | DONE — offline register→OTP→login→isolated sessions → BOLA labs |
+| **Playwright / MCP real** | BLOCKED — not in package deps / GHA by default (`detect_browser_capability`) |
+
+No silent real→fake fallback on real auth profiles.
 
 ## Profiles
 
-| Profile | Mailbox class | Completes sessions offline? |
-|---------|---------------|----------------------------|
-| `two_test_users_mock` | MockMailboxProvider | Yes |
-| `two_test_users_mailslurp` | MailSlurpMailboxProvider | No (needs browser + live API) |
-| `two_test_users_temp` | TempMailboxProvider | No (needs browser + base URL) |
-| `manual` | — | WAITING_FOR_AUTH |
+| Profile | Behavior |
+|---------|----------|
+| `two_test_users_mock` | Mock mailbox + optional fake browser path |
+| `two_test_users_mailslurp` | Real MailSlurp wired; needs key + browser for full auth |
+| `two_test_users_temp` | Temp API wired; needs base URL + browser |
+| `manual` | WAITING_FOR_AUTH |
 
-## Secrets
+## BOLA
 
-`MAILSLURP_API_KEY`, `TEMP_MAIL_BASE_URL`, `TEMP_MAIL_API_KEY`, `BROWSER_MCP_ENABLED`
-
-## Safety
-
-OTP/cookies/API keys never in artifacts. Real profiles never call `inject_otp_email`.
+- Synthetic secure + fake browser auth → REJECTED  
+- Synthetic vulnerable + fake browser auth → CONFIRMED (evidence + R/S/R)  
+- **Real authorized target BOLA: not claimed**

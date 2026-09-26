@@ -51,6 +51,7 @@ class AuthOrchestrator:
         target: str = "https://lab.test",
         provider_kind: str = "mock",
         allow_registration: bool = False,
+        browser: Any = None,
     ):
         self.identities = identity_provider or MockIdentityProvider()
         self.mailbox = mailbox or MockMailboxProvider()
@@ -62,6 +63,7 @@ class AuthOrchestrator:
         self.target = target
         self.provider_kind = provider_kind
         self.allow_registration = allow_registration
+        self.browser = browser
         self.trace: list[AuthTraceEvent] = []
         self._checkpoint: dict[str, Any] = {}
 
@@ -140,12 +142,44 @@ class AuthOrchestrator:
                     provider_kind=self.provider_kind,
                 )
 
+            # Optional Fake/Real browser path: register → OTP → login → SessionHandle
+            if self.browser is not None and hasattr(self.browser, "register_verify_login"):
+                self._log("browser", iid, "register_verify_login", "")
+                bres = self.browser.register_verify_login(iid, target=self.target)
+                self._log("browser", iid, str(bres.get("status") or ""), "")
+                if bres.get("status") != "ok":
+                    self._checkpoint = {
+                        "pause": AuthState.WAITING_FOR_AUTH,
+                        "identity_id": iid,
+                        "reason": bres.get("status"),
+                        "provider_kind": self.provider_kind,
+                    }
+                    return AuthOrchestratorResult(
+                        status="WAITING_FOR_AUTH",
+                        state=AuthState.WAITING_FOR_AUTH,
+                        reason=str(bres.get("status")),
+                        identities=self.identities.list_public(),
+                        trace=[e.to_dict() for e in self.trace],
+                        checkpoint=dict(self._checkpoint),
+                        provider_kind=self.provider_kind,
+                    )
+                handle = self.browser.session_handle(iid)
+                if handle:
+                    sessions.append(handle)
+                    # mirror into auth provider session map for apply_sessions compatibility
+                    if hasattr(self.auth, "_sessions"):
+                        self.auth._sessions[iid] = handle
+                    if hasattr(self.auth, "_material") and hasattr(self.browser, "_material"):
+                        mat = self.browser._material.get(iid)
+                        if mat is not None:
+                            self.auth._material[iid] = mat
+                continue
+
             # Mock-only synthetic OTP injection — never on real providers
             if inject_otps and self._is_mock_mailbox() and hasattr(self.mailbox, "inject_otp_email"):
                 self.mailbox.inject_otp_email(iid, f"{100000 + abs(hash(iid)) % 900000}")
                 self._log("otp_inject", iid, "mock_only", "synthetic")
             elif inject_otps and not self._is_mock_mailbox():
-                # Safety: refuse to pretend
                 self._log("otp_inject", iid, "skipped", "real_provider_no_inject")
 
             auth_res = self.auth.authenticate(ident, self.target)

@@ -64,3 +64,9 @@ skill_used.json, final-report.md, report.json, ledger.db
 - Mock: offline complete
 - MailSlurp / Temp: implemented, opt-in, fail-closed without secrets/browser
 - Real authenticated BOLA: blocked on browser runtime + authorized target
+
+
+## Browser (post-20a06ba)
+
+- FakeAuthBrowserProvider: offline A/B sessions + BOLA lab integration tested
+- Real browser (Playwright/MCP): unavailable in default GHA; capability detection fail-closed
