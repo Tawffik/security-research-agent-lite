@@ -70,3 +70,11 @@ skill_used.json, final-report.md, report.json, ledger.db
 
 - FakeAuthBrowserProvider: offline A/B sessions + BOLA lab integration tested
 - Real browser (Playwright/MCP): unavailable in default GHA; capability detection fail-closed
+
+
+## Playwright (optional)
+
+- Extra: `[project.optional-dependencies] browser = ["playwright>=1.40"]`
+- Provider: `PlaywrightBrowserProvider` (lazy import)
+- GHA: `.github/workflows/browser_lab.yml` (dispatch only)
+- Default CI: no browser install

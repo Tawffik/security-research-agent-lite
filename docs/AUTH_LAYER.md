@@ -1,33 +1,29 @@
-# Authenticated testing layer
+# Authenticated testing layer + Browser
 
-## Wiring
+## Fake Browser
+**PASS** — offline register→OTP→login→Session A/B → synthetic BOLA.
 
+## Playwright provider
+**IMPLEMENTED** (optional extra `.[browser]`).
+
+```bash
+pip install ".[browser]"
+python -m playwright install chromium
 ```
-auth_profile → factory → AuthOrchestrator(mailbox, provider_kind, browser?)
-                         → run_two_users()
-                         → Session A/B (or WAITING_FOR_AUTH)
-```
 
-## Browser
+Default `pip install .` does **not** install Playwright.
 
-| Runtime | Status |
-|---------|--------|
-| **FakeAuthBrowserProvider** | DONE — offline register→OTP→login→isolated sessions → BOLA labs |
-| **Playwright / MCP real** | BLOCKED — not in package deps / GHA by default (`detect_browser_capability`) |
+## Default CI
+Browser-independent — existing tests pass without Playwright (browser tests skipped).
 
-No silent real→fake fallback on real auth profiles.
+## Browser Lab (GHA)
+Workflow: **Browser Lab** (`workflow_dispatch`, confirm=`RUN`)
+- installs `.[dev,browser]`
+- `playwright install --with-deps chromium`
+- runs `tests/test_playwright_browser_capability.py` against **localhost synthetic app only**
 
-## Profiles
+## Real A/B authentication
+Still **blocked** unless real target + mailbox + authorized credentials exist.
 
-| Profile | Behavior |
-|---------|----------|
-| `two_test_users_mock` | Mock mailbox + optional fake browser path |
-| `two_test_users_mailslurp` | Real MailSlurp wired; needs key + browser for full auth |
-| `two_test_users_temp` | Temp API wired; needs base URL + browser |
-| `manual` | WAITING_FOR_AUTH |
-
-## BOLA
-
-- Synthetic secure + fake browser auth → REJECTED  
-- Synthetic vulnerable + fake browser auth → CONFIRMED (evidence + R/S/R)  
-- **Real authorized target BOLA: not claimed**
+## Real authenticated BOLA
+**NOT CLAIMED.**

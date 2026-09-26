@@ -1,0 +1,25 @@
+# Optional Playwright browser lab — workflow_dispatch only; does not run on push.
+name: Browser Lab
+on:
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: "Type RUN to execute browser_lab"
+        required: true
+        default: ""
+
+jobs:
+  browser_lab:
+    if: github.event.inputs.confirm == 'RUN'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install project + browser extra
+        run: |
+          pip install -e ".[dev,browser]"
+          python -m playwright install --with-deps chromium
+      - name: Playwright browser tests only
+        run: pytest -q tests/test_playwright_browser_capability.py

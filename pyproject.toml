@@ -16,6 +16,7 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = ["pytest>=7.0"]
+browser = ["playwright>=1.40.0"]
 
 [project.scripts]
 agent-lite = "agent_lite.cli:main"
