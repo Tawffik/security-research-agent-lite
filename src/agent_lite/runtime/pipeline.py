@@ -1,7 +1,11 @@
 """
 Evidence-driven research pipeline.
 
-Lab provides observations only. Verdicts come from evidence + gate + R/S/R.
+Modes:
+  synthetic (default) — LabScenario injects observations (no sockets).
+  http — ActionRequest → HttpExecutor → HttpObservation → same evidence path.
+
+Verdicts always come from evidence + gate + R/S/R, never from scenario labels.
 """
 
 from __future__ import annotations
@@ -10,18 +14,19 @@ import json
 import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Optional, Union
+from typing import Any, Optional, Protocol, Union
 
 from agent_lite.content_isolation.sanitizer import wrap_untrusted
 from agent_lite.evidence.store import EvidenceStore
 from agent_lite.experiments.model import Experiment
-from agent_lite.hypotheses.engine import Hypothesis, HypothesisEngine
+from agent_lite.hypotheses.engine import HypothesisEngine
 from agent_lite.ledger.sqlite_ledger import SQLiteLedger
-from agent_lite.opportunities.engine import Opportunity, OpportunityEngine
+from agent_lite.opportunities.engine import OpportunityEngine
 from agent_lite.recon.adapter import ReconAdapter
 from agent_lite.reporting.report import build_report
 from agent_lite.scope.guard import ScopeDecision, ScopeGuard
 from agent_lite.skills.authz_bola import (
+    LabObservation,
     LabScenario,
     body_owner_marker,
     body_private_fields,
@@ -34,11 +39,21 @@ from agent_lite.verification.fp_gate import FalsePositiveGate
 from agent_lite.verification.loop import VerificationLoop, Verdict
 
 
+class _ObsLike(Protocol):
+    identity: str
+    method: str
+    path: str
+    host: str
+    status: int
+    body: str
+
+
 @dataclass
 class RunResult:
     engagement_id: str
     run_id: str
     scope_allowed: bool
+    mode: str = "synthetic"
     opportunities: list = field(default_factory=list)
     hypotheses: list = field(default_factory=list)
     experiments: list = field(default_factory=list)
@@ -55,6 +70,7 @@ class RunResult:
             "engagement_id": self.engagement_id,
             "run_id": self.run_id,
             "scope_allowed": self.scope_allowed,
+            "mode": self.mode,
             "opportunities": [o.to_dict() for o in self.opportunities],
             "hypotheses": [h.to_dict() for h in self.hypotheses],
             "experiments": [e.to_dict() for e in self.experiments],
@@ -85,21 +101,180 @@ class ResearchPipeline:
         self.ledger = SQLiteLedger(self.artifacts_dir / "ledger.db", self.run_id, engagement_id)
         self.evidence = EvidenceStore(engagement_id)
 
+    # ------------------------------------------------------------------
+    # Public entry points
+    # ------------------------------------------------------------------
+
     def run(
         self,
         recon_path: Union[str, Path],
         scenario: Optional[LabScenario] = None,
     ) -> RunResult:
+        """Synthetic path (default). Observations come from LabScenario — no sockets."""
         limitations = [
-            "Lab/fixture observations — not live HTTP unless extended",
+            "Lab/fixture observations — not live HTTP",
             "Verdict derived from observations only (no scenario answer key)",
         ]
-        self.ledger.record("start", "ok", self.engagement_id)
+        self.ledger.record("start", "ok", f"{self.engagement_id}:synthetic")
 
+        recon, ctx, scope_block = self._prepare(recon_path)
+        if scope_block is not None:
+            return scope_block
+
+        opps, hyps = self._opportunities_and_hypotheses(ctx)
+        scenario = scenario or bola_positive_lab(ctx.primary_host)
+        for obs in scenario.observations:
+            wrap_untrusted(obs.body, source="lab_response")
+
+        return self._investigate(
+            mode="synthetic",
+            recon=recon,
+            ctx=ctx,
+            opps=opps,
+            hyps=hyps,
+            observations=list(scenario.observations),
+            limitations=limitations,
+            evidence_source="lab_observation",
+            evidence_provenance="synthetic_lab_observation",
+        )
+
+    def run_http(
+        self,
+        recon_path: Union[str, Path],
+        *,
+        base_url: str,
+        object_path: str,
+        executor: Any,
+        owner_identity: str = "user_a",
+        non_owner_identity: str = "user_b",
+        method: str = "GET",
+    ) -> RunResult:
+        """
+        HTTP mode: real ActionRequest → HttpExecutor → HttpObservation.
+
+        executor must be a configured HttpExecutor (scope/budget/identities already set).
+        Credentials stay inside the executor boundary; pipeline only sees identity_id.
+        """
+        from agent_lite.http.models import ActionRequest
+        from agent_lite.http.models import HttpObservation
+
+        limitations = [
+            "HTTP mode: observations from HttpExecutor (real or injected transport)",
+            "Verdict derived from observations only (no scenario answer key)",
+            "Credentials never enter evidence/ledger/report",
+        ]
+        self.ledger.record("start", "ok", f"{self.engagement_id}:http")
+
+        recon, ctx, scope_block = self._prepare(recon_path)
+        if scope_block is not None:
+            return scope_block
+
+        opps, hyps = self._opportunities_and_hypotheses(ctx)
+        hyp = hyps[0] if hyps else None
+        exp_id = "EXP-HTTP-001"
+        url = base_url.rstrip("/") + object_path
+
+        exp = Experiment(
+            experiment_id=exp_id,
+            hypothesis_ids=[hyp.hypothesis_id] if hyp else [],
+            objective="Discriminate INV-AUTHZ-001 via owner vs non-owner same object over HTTP",
+            action=f"{method} {object_path} as {owner_identity} then {non_owner_identity}",
+            expected_observation="Non-owner denied or lacks private owner-bound fields",
+            risk="low",
+            cost=0.4,
+        )
+
+        observations: list[LabObservation] = []
+        http_obs_list: list[HttpObservation] = []
+        blocked = False
+        block_reason = ""
+
+        for ident, purpose in (
+            (owner_identity, "owner_baseline"),
+            (non_owner_identity, "non_owner_probe"),
+        ):
+            req = ActionRequest(
+                method=method,
+                url=url,
+                identity_id=ident,
+                experiment_id=exp_id,
+                purpose=purpose,
+                timeout_seconds=10.0,
+            )
+            hobs: HttpObservation = executor.execute(req)
+            http_obs_list.append(hobs)
+            self.ledger.record(
+                "http_action",
+                "blocked" if hobs.blocked else "ok",
+                f"{ident}:{hobs.response_status}:{hobs.block_reason or hobs.scope_decision}",
+            )
+            if hobs.blocked:
+                blocked = True
+                block_reason = hobs.block_reason or hobs.scope_decision
+                break
+            wrap_untrusted(hobs.response_body, source="http_response")
+            observations.append(
+                LabObservation(
+                    identity=hobs.identity_id or ident,
+                    method=hobs.method,
+                    path=hobs.path.split("?")[0] if hobs.path else object_path,
+                    host=hobs.host,
+                    status=hobs.response_status,
+                    body=hobs.response_body,
+                    notes=f"http_obs={hobs.observation_id}",
+                )
+            )
+
+        if blocked or len(observations) < 2:
+            exp.result = "blocked"
+            exp.scope_decision = block_reason or "incomplete_observations"
+            exp.request_count = sum(1 for h in http_obs_list if not h.blocked)
+            self.ledger.finish("blocked")
+            result = RunResult(
+                engagement_id=self.engagement_id,
+                run_id=self.run_id,
+                scope_allowed=True,
+                mode="http",
+                opportunities=opps,
+                hypotheses=hyps,
+                experiments=[exp],
+                gate_status="BLOCK",
+                limitations=limitations,
+                summary=f"EXPERIMENT_BLOCKED: {exp.scope_decision}",
+            )
+            self._write_artifacts(result, ctx, recon, mode="http")
+            return result
+
+        exp.scope_decision = "ALLOW"
+        exp.result = "executed"
+        exp.request_count = len(observations)
+        exp.target_interactions = len(observations)
+        exp.actual_observation = "; ".join(f"{o.identity}:{o.status}" for o in observations)
+        exp.information_gained = "cross_identity_http_status_and_body"
+
+        return self._investigate(
+            mode="http",
+            recon=recon,
+            ctx=ctx,
+            opps=opps,
+            hyps=hyps,
+            observations=observations,
+            limitations=limitations,
+            evidence_source="http_observation",
+            evidence_provenance="http_executor_observation",
+            experiment=exp,
+        )
+
+    # ------------------------------------------------------------------
+    # Shared internals
+    # ------------------------------------------------------------------
+
+    def _prepare(
+        self, recon_path: Union[str, Path]
+    ) -> tuple[Any, TargetContext, Optional[RunResult]]:
         recon = ReconAdapter().from_file(recon_path)
         self.ledger.record("normalize", "ok", recon.primary_host)
         ctx = build_target_context(self.engagement_id, recon)
-
         scope_res = self.scope.check(ctx.primary_host, "GET")
         if scope_res.decision != ScopeDecision.ALLOW:
             self.ledger.record("scope", "blocked", scope_res.reason)
@@ -110,7 +285,7 @@ class ResearchPipeline:
                 claim="scope_denied",
                 evidence_ids=[],
                 gate_status="BLOCK",
-                limitations=limitations + [f"ScopeGuard: {scope_res.reason}"],
+                limitations=[f"ScopeGuard: {scope_res.reason}"],
             )
             result = RunResult(
                 engagement_id=self.engagement_id,
@@ -118,12 +293,14 @@ class ResearchPipeline:
                 scope_allowed=False,
                 gate_status="BLOCK",
                 report=report,
-                limitations=limitations,
+                limitations=[f"ScopeGuard: {scope_res.reason}"],
                 summary=f"SCOPE_BLOCKED: {scope_res.reason}",
             )
             self._write_artifacts(result, ctx, recon)
-            return result
+            return recon, ctx, result
+        return recon, ctx, None
 
+    def _opportunities_and_hypotheses(self, ctx: TargetContext):
         opps = OpportunityEngine(self.engagement_id).extract(ctx)
         hyps = HypothesisEngine(self.engagement_id).from_opportunities(opps, ctx)
         self.ledger.record("opportunity_hypothesis", "ok", f"opps={len(opps)} hyps={len(hyps)}")
@@ -132,60 +309,67 @@ class ResearchPipeline:
             "hypotheses",
             {"opportunities": [o.to_dict() for o in opps], "hypotheses": [h.to_dict() for h in hyps]},
         )
+        return opps, hyps
 
-        scenario = scenario or bola_positive_lab(ctx.primary_host)
-        # Isolate target-origin content
-        for obs in scenario.observations:
-            wrap_untrusted(obs.body, source="lab_response")
-
-        # Experiment: cross-identity differential (designed from hypothesis, executed against lab env)
+    def _investigate(
+        self,
+        *,
+        mode: str,
+        recon: Any,
+        ctx: TargetContext,
+        opps: list,
+        hyps: list,
+        observations: list,
+        limitations: list,
+        evidence_source: str,
+        evidence_provenance: str,
+        experiment: Optional[Experiment] = None,
+    ) -> RunResult:
         hyp = hyps[0] if hyps else None
-        exp = Experiment(
-            experiment_id="EXP-001",
-            hypothesis_ids=[hyp.hypothesis_id] if hyp else [],
-            objective="Discriminate INV-AUTHZ-001 via owner vs non-owner same object",
-            action="GET same object path as owner then non-owner",
-            expected_observation="Non-owner denied or lacks private owner-bound fields",
-            risk="low",
-            cost=0.2,
-        )
 
-        # Per-action scope for each observation host/method
-        for obs in scenario.observations:
-            sr = self.scope.check(obs.host, obs.method)
-            if sr.decision != ScopeDecision.ALLOW:
-                exp.result = "blocked"
-                exp.scope_decision = sr.reason
-                self.ledger.record("experiment_action", "blocked", sr.reason)
-                break
-        else:
-            exp.scope_decision = "ALLOW"
-            exp.result = "executed"
-            exp.request_count = len(scenario.observations)
-            exp.target_interactions = len(scenario.observations)
-            exp.actual_observation = "; ".join(
-                f"{o.identity}:{o.status}" for o in scenario.observations
+        if experiment is None:
+            experiment = Experiment(
+                experiment_id="EXP-001",
+                hypothesis_ids=[hyp.hypothesis_id] if hyp else [],
+                objective="Discriminate INV-AUTHZ-001 via owner vs non-owner same object",
+                action="GET same object path as owner then non-owner",
+                expected_observation="Non-owner denied or lacks private owner-bound fields",
+                risk="low",
+                cost=0.2,
             )
-            exp.information_gained = "cross_identity_status_and_body"
-
-        if exp.result == "blocked":
-            self.ledger.finish("blocked")
-            result = RunResult(
-                engagement_id=self.engagement_id,
-                run_id=self.run_id,
-                scope_allowed=True,
-                opportunities=opps,
-                hypotheses=hyps,
-                experiments=[exp],
-                gate_status="BLOCK",
-                limitations=limitations,
-                summary=f"EXPERIMENT_BLOCKED: {exp.scope_decision}",
+            # Per-action scope for synthetic observations
+            for obs in observations:
+                sr = self.scope.check(obs.host, obs.method)
+                if sr.decision != ScopeDecision.ALLOW:
+                    experiment.result = "blocked"
+                    experiment.scope_decision = sr.reason
+                    self.ledger.record("experiment_action", "blocked", sr.reason)
+                    self.ledger.finish("blocked")
+                    result = RunResult(
+                        engagement_id=self.engagement_id,
+                        run_id=self.run_id,
+                        scope_allowed=True,
+                        mode=mode,
+                        opportunities=opps,
+                        hypotheses=hyps,
+                        experiments=[experiment],
+                        gate_status="BLOCK",
+                        limitations=limitations,
+                        summary=f"EXPERIMENT_BLOCKED: {experiment.scope_decision}",
+                    )
+                    self._write_artifacts(result, ctx, recon, mode=mode)
+                    return result
+            experiment.scope_decision = "ALLOW"
+            experiment.result = "executed"
+            experiment.request_count = len(observations)
+            experiment.target_interactions = len(observations)
+            experiment.actual_observation = "; ".join(
+                f"{o.identity}:{o.status}" for o in observations
             )
-            self._write_artifacts(result, ctx, recon)
-            return result
+            experiment.information_gained = "cross_identity_status_and_body"
 
         # Evidence from observations only
-        for obs in scenario.observations:
+        for obs in observations:
             pol = "neutral"
             if obs.identity in ("user_b",) or str(obs.identity).endswith("_b"):
                 if obs.status < 400 and body_private_fields(obs.body):
@@ -194,20 +378,19 @@ class ResearchPipeline:
                     pol = "negative"
             rec = self.evidence.add(
                 target=f"{obs.method} {obs.path}@{obs.host}",
-                source="lab_observation",
+                source=evidence_source,
                 action=f"{obs.identity}:{obs.method}:{obs.path}",
                 observation=f"status={obs.status} body={obs.body[:500]}",
                 polarity=pol,
                 hypothesis_id=hyp.hypothesis_id if hyp else "",
-                provenance="synthetic_lab_observation",
+                provenance=evidence_provenance,
             )
-            exp.evidence_produced.append(rec.evidence_id)
+            experiment.evidence_produced.append(rec.evidence_id)
 
-        # Facts derived from observations — NEVER from scenario.suggests_*
-        owner = scenario.observations[0]
+        owner = observations[0]
         non_owner = next(
-            (o for o in scenario.observations if o.identity != owner.identity),
-            scenario.observations[-1],
+            (o for o in observations if o.identity != owner.identity),
+            observations[-1],
         )
         owner_mark = body_owner_marker(non_owner.body)
         facts = {
@@ -223,6 +406,7 @@ class ResearchPipeline:
             "owner_marker_mismatch": bool(
                 owner_mark and owner_mark != non_owner.identity
             ),
+            "observation_mode": mode,
         }
 
         gate = FalsePositiveGate().evaluate(facts)
@@ -239,7 +423,7 @@ class ResearchPipeline:
         self.ledger.checkpoint(
             f"cp_{self.run_id}_done",
             "verification",
-            {"verdict": verdict.to_dict(), "facts": facts},
+            {"verdict": verdict.to_dict(), "facts": facts, "mode": mode},
         )
         self.ledger.finish("completed")
 
@@ -257,9 +441,10 @@ class ResearchPipeline:
             engagement_id=self.engagement_id,
             run_id=self.run_id,
             scope_allowed=True,
+            mode=mode,
             opportunities=opps,
             hypotheses=hyps,
-            experiments=[exp],
+            experiments=[experiment],
             evidence_ids=self.evidence.ids(),
             gate_status=gate.status,
             verdict=verdict,
@@ -268,23 +453,50 @@ class ResearchPipeline:
             summary=f"{verdict.status}: {verdict.reason}",
             facts=facts,
         )
-        self._write_artifacts(result, ctx, recon, gate.to_dict())
+        self._write_artifacts(result, ctx, recon, gate.to_dict(), mode=mode)
         return result
 
-    def _write_artifacts(self, result: RunResult, ctx: TargetContext, recon: Any, gate_dict: Optional[dict] = None) -> None:
+    def _write_artifacts(
+        self,
+        result: RunResult,
+        ctx: TargetContext,
+        recon: Any,
+        gate_dict: Optional[dict] = None,
+        mode: str = "synthetic",
+    ) -> None:
         d = self.artifacts_dir
         d.mkdir(parents=True, exist_ok=True)
         (d / "engagement.json").write_text(
-            json.dumps({"engagement_id": self.engagement_id, "run_id": self.run_id, "mode": "lab"}, indent=2)
+            json.dumps(
+                {
+                    "engagement_id": self.engagement_id,
+                    "run_id": self.run_id,
+                    "mode": mode,
+                },
+                indent=2,
+            )
         )
         (d / "normalized_recon.json").write_text(json.dumps(recon.to_dict(), indent=2))
         (d / "target_context.json").write_text(json.dumps(ctx.to_dict(), indent=2))
-        (d / "opportunities.json").write_text(json.dumps([o.to_dict() for o in result.opportunities], indent=2))
-        (d / "hypotheses.json").write_text(json.dumps([h.to_dict() for h in result.hypotheses], indent=2))
-        (d / "experiments.json").write_text(json.dumps([e.to_dict() for e in result.experiments], indent=2))
+        (d / "opportunities.json").write_text(
+            json.dumps([o.to_dict() for o in result.opportunities], indent=2)
+        )
+        (d / "hypotheses.json").write_text(
+            json.dumps([h.to_dict() for h in result.hypotheses], indent=2)
+        )
+        (d / "experiments.json").write_text(
+            json.dumps([e.to_dict() for e in result.experiments], indent=2)
+        )
         self.evidence.write_jsonl(d / "evidence.jsonl")
         (d / "decisions.jsonl").write_text(
-            json.dumps({"gate": gate_dict, "verdict": result.verdict.to_dict() if result.verdict else None, "facts": result.facts})
+            json.dumps(
+                {
+                    "gate": gate_dict,
+                    "verdict": result.verdict.to_dict() if result.verdict else None,
+                    "facts": result.facts,
+                    "mode": mode,
+                }
+            )
             + "\n"
         )
         findings = []
@@ -300,6 +512,7 @@ class ResearchPipeline:
                     "verification_decision": result.verdict.status,
                     "status": "CONFIRMED",
                     "provenance": "agent_lite",
+                    "mode": mode,
                 }
             )
         (d / "findings.json").write_text(json.dumps(findings, indent=2))
