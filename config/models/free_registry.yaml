@@ -1,0 +1,36 @@
+# Curated free/eligible OpenRouter model candidates for model_profile=free.
+# Discovery can refresh availability; this is the offline priority list.
+schema_version: "1.0"
+provider: openrouter
+max_fallback_attempts: 3
+models:
+  - model_id: "openrouter/free"
+    free: true
+    context_length: 8192
+    capabilities: [chat, json]
+    priority: 10
+    status: candidate
+  - model_id: "meta-llama/llama-3.2-3b-instruct:free"
+    free: true
+    context_length: 131072
+    capabilities: [chat]
+    priority: 20
+    status: candidate
+  - model_id: "google/gemma-2-9b-it:free"
+    free: true
+    context_length: 8192
+    capabilities: [chat]
+    priority: 30
+    status: candidate
+  - model_id: "mistralai/mistral-7b-instruct:free"
+    free: true
+    context_length: 32768
+    capabilities: [chat]
+    priority: 40
+    status: candidate
+  - model_id: "qwen/qwen-2.5-7b-instruct:free"
+    free: true
+    context_length: 32768
+    capabilities: [chat]
+    priority: 50
+    status: candidate

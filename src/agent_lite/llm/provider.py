@@ -159,14 +159,27 @@ class OpenAICompatibleProvider:
                 raw = resp.read().decode("utf-8", errors="replace")
         except urllib.error.HTTPError as e:
             detail = e.read().decode("utf-8", errors="replace")[:300]
+            reason = f"http_{e.code}"
+            if e.code == 401:
+                reason = "invalid_api_key"
+            elif e.code == 429:
+                reason = "http_429"
+            elif e.code in (500, 502, 503, 504):
+                reason = f"http_{e.code}"
+            elif e.code == 404:
+                reason = "model_unavailable"
             return LLMResponse(
                 status="error",
-                reason=f"http_{e.code}",
+                reason=reason,
                 text=detail,
                 model=self.model,
             )
+        except TimeoutError:
+            return LLMResponse(status="error", reason="timeout", model=self.model)
         except Exception as e:  # noqa: BLE001
-            return LLMResponse(status="error", reason=str(type(e).__name__), model=self.model)
+            name = type(e).__name__
+            reason = "timeout" if "timeout" in name.lower() or "Timeout" in name else name
+            return LLMResponse(status="error", reason=reason, model=self.model)
 
         try:
             parsed = json.loads(raw)
@@ -209,4 +222,24 @@ def create_llm_provider(
     return (
         OpenAICompatibleProvider(key, base_url=base, model=model),
         f"provider_ready:{model}",
+    )
+
+
+def create_llm_from_profile(
+    *,
+    model_profile: str = "free",
+    model_override: str = "",
+    require_key: bool = False,
+    allow_mock: bool = True,
+    do_health_check: bool = False,
+):
+    """Preferred entry for mobile/GHA runs."""
+    from agent_lite.llm.router import select_provider
+
+    return select_provider(
+        model_profile=model_profile,
+        model_override=model_override,
+        require_key=require_key,
+        allow_mock=allow_mock,
+        do_health_check=do_health_check,
     )

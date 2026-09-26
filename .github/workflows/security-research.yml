@@ -1,31 +1,52 @@
-name: Security Research
+# Mobile-friendly primary runtime for Security Research Agent Lite
+name: Security Research Agent
 on:
   workflow_dispatch:
     inputs:
       engagement_id:
-        description: Engagement id
-        default: eng_gha
-      recon_path:
-        description: Path to recon JSON in repo (or use artifact download step)
-        default: examples/fixtures/bbci_recon_sample.json
+        description: "Engagement (resolves recon from config/engagements/index.yaml)"
+        required: true
+        default: eng_demo
+        type: choice
+        options:
+          - eng_demo
+          - eng_gha
+          - eng_sample
+      recon_artifact:
+        description: "Optional explicit recon path (overrides engagement map)"
+        required: false
+        default: ""
+      model_profile:
+        description: "LLM profile: free (auto free models) | mock | or leave free"
+        required: true
+        default: free
+        type: choice
+        options:
+          - free
+          - mock
+      execution_mode:
+        description: "analysis = recon+LLM+BOLA lab path (safe default)"
+        required: true
+        default: analysis
+        type: choice
+        options:
+          - analysis
+          - synthetic
       scenario:
-        description: Local lab scenario for evidence discrimination
+        description: "Local discrimination scenario (evidence lab)"
+        required: true
         default: positive
         type: choice
-        options: [positive, secure, public, shared, ambiguous]
-      use_llm:
-        description: Enable LLM hypothesis proposals (uses LLM_API_KEY secret if set)
-        type: boolean
-        default: true
+        options:
+          - positive
+          - secure
+          - public
+          - shared
+          - ambiguous
       require_llm:
-        description: Fail if LLM_API_KEY is missing
+        description: "Fail if OPENROUTER_API_KEY / LLM_API_KEY missing"
         type: boolean
         default: false
-      mode:
-        description: Run mode
-        type: choice
-        default: analysis
-        options: [analysis, synthetic]
 
 jobs:
   research:
@@ -35,32 +56,37 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - run: pip install -e ".[dev]"
-      - name: Unit tests
+      - name: Install
+        run: pip install -e ".[dev]"
+      - name: Tests
         run: pytest -q
-      - name: Research run
+      - name: Research
         env:
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+          OPENROUTER_BASE_URL: ${{ secrets.OPENROUTER_BASE_URL }}
           LLM_API_KEY: ${{ secrets.LLM_API_KEY }}
           LLM_BASE_URL: ${{ secrets.LLM_BASE_URL }}
           LLM_MODEL: ${{ secrets.LLM_MODEL }}
         run: |
-          set -e
+          set -euo pipefail
           ARGS=(
-            --recon "${{ inputs.recon_path }}"
-            --scope config/scope.yaml
-            --scenario "${{ inputs.scenario }}"
             --engagement-id "${{ inputs.engagement_id }}"
+            --model-profile "${{ inputs.model_profile }}"
+            --mode "${{ inputs.execution_mode }}"
+            --scenario "${{ inputs.scenario }}"
             --artifacts-dir artifacts
-            --mode "${{ inputs.mode }}"
+            --repo-root .
           )
-          if [ "${{ inputs.use_llm }}" = "true" ]; then
-            ARGS+=(--use-llm)
+          RECON="${{ inputs.recon_artifact }}"
+          if [ -n "$RECON" ]; then
+            ARGS+=(--recon "$RECON")
           fi
           if [ "${{ inputs.require_llm }}" = "true" ]; then
             ARGS+=(--require-llm)
           fi
           python -m agent_lite.cli "${ARGS[@]}"
-      - uses: actions/upload-artifact@v4
+      - name: Upload results
+        uses: actions/upload-artifact@v4
         with:
-          name: research-artifacts
+          name: research-${{ inputs.engagement_id }}
           path: artifacts/

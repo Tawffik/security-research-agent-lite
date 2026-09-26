@@ -1,0 +1,15 @@
+# Mobile-friendly engagement → recon path map
+schema_version: "1.0"
+engagements:
+  eng_demo:
+    recon: examples/fixtures/bbci_recon_sample.json
+    scope: config/scope.yaml
+    label: Demo BBCI-shaped recon
+  eng_gha:
+    recon: examples/fixtures/bbci_recon_sample.json
+    scope: config/scope.yaml
+    label: Default GHA engagement
+  eng_sample:
+    recon: examples/fixtures/sample_recon.json
+    scope: config/scope.yaml
+    label: Minimal sample recon
