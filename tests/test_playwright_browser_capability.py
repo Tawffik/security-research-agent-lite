@@ -14,7 +14,7 @@ pytest.importorskip("playwright")
 
 @pytest.fixture(scope="module")
 def local_lab():
-    from tests.browser_lab.synthetic_app import serve
+    from agent_lite.browser.synthetic_lab_app import serve
 
     server = serve("127.0.0.1", 8765)
     t = threading.Thread(target=server.serve_forever, daemon=True)
