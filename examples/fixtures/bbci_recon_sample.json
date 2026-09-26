@@ -1,0 +1,50 @@
+{
+  "schema_version": "bbci_recon_v1",
+  "engagement_id": "eng_bbci_demo",
+  "generated_at": "2026-09-26T00:00:00Z",
+  "primary_host": "api.acme-demo.test",
+  "hosts": [
+    "api.acme-demo.test",
+    "www.acme-demo.test"
+  ],
+  "technologies": ["nginx", "express", "json-api"],
+  "endpoints": [
+    {
+      "method": "GET",
+      "path": "/api/orders/{id}",
+      "url": "https://api.acme-demo.test/api/orders/{id}",
+      "host": "api.acme-demo.test",
+      "parameters": { "id": "{id}" }
+    },
+    {
+      "method": "GET",
+      "path": "/api/catalog/item/{id}",
+      "parameters": { "id": "{id}" }
+    },
+    {
+      "method": "GET",
+      "url": "https://api.acme-demo.test/health"
+    }
+  ],
+  "urls": [
+    "https://api.acme-demo.test/api/orders/1001"
+  ],
+  "actors": [
+    { "actor_id": "user_a", "name": "user_a", "type": "user" },
+    { "actor_id": "user_b", "name": "user_b", "type": "user" }
+  ],
+  "resources": [
+    { "name": "order-1001", "type": "object", "owner_actor_id": "user_a" }
+  ],
+  "observations": [
+    {
+      "method": "GET",
+      "url": "https://api.acme-demo.test/health",
+      "host": "api.acme-demo.test",
+      "path": "/health",
+      "status": 200,
+      "note": "health probe from BBCI"
+    }
+  ],
+  "notes": "BBCI-shaped recon fixture for Lite adapter validation (not a live target)"
+}
