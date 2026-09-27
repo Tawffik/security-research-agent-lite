@@ -230,31 +230,58 @@ def main(argv: list[str] | None = None) -> int:
         print(json.dumps(result.to_dict(), indent=2))
         return 0
 
-    if not args.http_base_url:
-        print("error: --http-base-url required", file=sys.stderr)
-        return 2
-    from agent_lite.budget.guard import BudgetGuard
-    from agent_lite.http.executor import HttpExecutor
-    from agent_lite.identity.resolver import Identity, IdentityResolver
-    from agent_lite.scope.guard import ScopeGuard
+    # ---- live HTTP (real target observations; no synthetic lab) ----
+    if (args.authorized or "").strip().upper() != "AUTHORIZED":
+        print(
+            json.dumps(
+                {
+                    "status": "BLOCKED",
+                    "reason": "authorization_required",
+                    "hint": "Pass --authorized AUTHORIZED for live HTTP (explicit opt-in)",
+                },
+                indent=2,
+            )
+        )
+        return 9
 
-    scope = ScopeGuard.from_file(scope_path)
-    budget = BudgetGuard.from_file(Path("config/budget.yaml"))
-    idr = IdentityResolver()
-    for iid in (args.http_owner, args.http_non_owner):
-        idr.register(Identity(identity_id=iid, credential_ref=f"TEST_{iid.upper()}"))
-    executor = HttpExecutor(
-        scope=scope, budget=budget, identities=idr, allowed_schemes={"http", "https"}
+    from agent_lite.runtime.live_http import (
+        build_executor_from_env,
+        pick_base_url,
+        pick_object_path,
     )
+
+    base_url = pick_base_url(recon_path, args.http_base_url)
+    object_path = pick_object_path(recon_path, args.http_object_path)
+    if not base_url:
+        print(json.dumps({"status": "BLOCKED", "reason": "missing_base_url"}, indent=2))
+        return 2
+
+    executor, emeta = build_executor_from_env(
+        scope_path=scope_path,
+        owner_id=args.http_owner,
+        non_owner_id=args.http_non_owner,
+    )
+    if executor is None:
+        print(json.dumps({"status": "BLOCKED", "auth": emeta}, indent=2))
+        return 8
+
     result = pipe.run_http(
         recon_path,
-        base_url=args.http_base_url,
-        object_path=args.http_object_path,
+        base_url=base_url,
+        object_path=object_path,
         executor=executor,
         owner_identity=args.http_owner,
         non_owner_identity=args.http_non_owner,
     )
-    print(json.dumps(result.to_dict(), indent=2))
+    out = result.to_dict()
+    out["live"] = {
+        "base_url": base_url,
+        "object_path": object_path,
+        "identity_meta": {k: v for k, v in emeta.items() if k != "status"},
+        "authorized": True,
+    }
+    # never dump secrets
+    print(json.dumps(out, indent=2))
     return 0
 
 

@@ -41,13 +41,14 @@ on:
           - free
           - mock
       execution_mode:
-        description: "analysis = recon+LLM+BOLA lab (safe default)"
+        description: "analysis=lab | http=live target (needs AUTHORIZED + session secrets)"
         required: true
         default: analysis
         type: choice
         options:
           - analysis
           - synthetic
+          - http
       scenario:
         description: "Local discrimination scenario"
         required: true
@@ -79,6 +80,18 @@ on:
           - fake
           - playwright
           - mcp
+      confirm_authorized:
+        description: "Type AUTHORIZED to allow live HTTP (http mode only)"
+        required: false
+        default: ""
+      http_base_url:
+        description: "Optional override base URL (else from recon primary_host)"
+        required: false
+        default: ""
+      http_object_path:
+        description: "Optional object path (else picked from recon endpoints)"
+        required: false
+        default: ""
       require_llm:
         description: "Fail if LLM API key missing"
         type: boolean
@@ -140,6 +153,14 @@ jobs:
           BROWSER_RUNTIME: ${{ inputs.browser_runtime }}
           MCP_BROWSER_URL: ${{ secrets.MCP_BROWSER_URL }}
           MCP_BROWSER_TOKEN: ${{ secrets.MCP_BROWSER_TOKEN }}
+          TEST_USER_A_TOKEN: ${{ secrets.TEST_USER_A_TOKEN }}
+          TEST_USER_A_COOKIE: ${{ secrets.TEST_USER_A_COOKIE }}
+          TEST_USER_B_TOKEN: ${{ secrets.TEST_USER_B_TOKEN }}
+          TEST_USER_B_COOKIE: ${{ secrets.TEST_USER_B_COOKIE }}
+          USER_A_TOKEN: ${{ secrets.USER_A_TOKEN }}
+          USER_A_COOKIE: ${{ secrets.USER_A_COOKIE }}
+          USER_B_TOKEN: ${{ secrets.USER_B_TOKEN }}
+          USER_B_COOKIE: ${{ secrets.USER_B_COOKIE }}
         run: |
           set -euo pipefail
           ARGS=(
@@ -161,6 +182,15 @@ jobs:
           AUTH="${{ inputs.auth_profile }}"
           if [ -n "$AUTH" ]; then
             ARGS+=(--auth-profile "$AUTH")
+          fi
+          if [ "${{ inputs.execution_mode }}" = "http" ]; then
+            ARGS+=(--authorized "${{ inputs.confirm_authorized }}")
+            if [ -n "${{ inputs.http_base_url }}" ]; then
+              ARGS+=(--http-base-url "${{ inputs.http_base_url }}")
+            fi
+            if [ -n "${{ inputs.http_object_path }}" ]; then
+              ARGS+=(--http-object-path "${{ inputs.http_object_path }}")
+            fi
           fi
           python -m agent_lite.cli "${ARGS[@]}"
       - name: Upload results
