@@ -256,11 +256,21 @@ def main(argv: list[str] | None = None) -> int:
         print(json.dumps({"status": "BLOCKED", "reason": "missing_base_url"}, indent=2))
         return 2
 
-    executor, emeta = build_executor_from_env(
+    from agent_lite.runtime.live_http import try_browser_password_login
+
+    executor, emeta = try_browser_password_login(
         scope_path=scope_path,
+        base_url=base_url,
         owner_id=args.http_owner,
         non_owner_id=args.http_non_owner,
     )
+    if executor is None:
+        # fallback token/cookie only
+        executor, emeta = build_executor_from_env(
+            scope_path=scope_path,
+            owner_id=args.http_owner,
+            non_owner_id=args.http_non_owner,
+        )
     if executor is None:
         print(json.dumps({"status": "BLOCKED", "auth": emeta}, indent=2))
         return 8

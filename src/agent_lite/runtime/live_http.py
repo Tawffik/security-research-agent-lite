@@ -83,3 +83,80 @@ def build_executor_from_env(
     budget = BudgetGuard.from_file(Path(budget_path)) if Path(budget_path).is_file() else BudgetGuard.from_file(Path("config/budget.yaml"))
     ex = HttpExecutor(scope=scope, budget=budget, identities=idr, allowed_schemes={"http", "https"})
     return ex, {**meta, "status": "ok"}
+
+
+def try_browser_password_login(
+    *,
+    scope_path: str | Path,
+    base_url: str,
+    owner_id: str = "user_a",
+    non_owner_id: str = "user_b",
+    login_path: str = "",
+) -> tuple[Optional[HttpExecutor], dict[str, Any]]:
+    """
+    If EMAIL+PASSWORD secrets exist (or MailSlurp for email), use Playwright login.
+    Else fall back to token/cookie executor.
+    """
+    login_url = (os.environ.get("LOGIN_URL") or "").strip()
+    if not login_url:
+        path = login_path or os.environ.get("LOGIN_PATH") or "/login"
+        if not path.startswith("/"):
+            path = "/" + path
+        login_url = base_url.rstrip("/") + path
+
+    # Detect password mode
+    def has_password(ref: str) -> bool:
+        r = ref.upper()
+        return bool(os.environ.get(f"{r}_PASSWORD") or os.environ.get(f"{r}_PASS"))
+
+    refs = []
+    for iid, candidates in (
+        (owner_id, ["TEST_USER_A", "USER_A", "TEST_IDENTITY_A"]),
+        (non_owner_id, ["TEST_USER_B", "USER_B", "TEST_IDENTITY_B"]),
+    ):
+        chosen = None
+        for c in candidates:
+            if has_password(c) or os.environ.get(f"{c}_EMAIL") or os.environ.get("MAILSLURP_API_KEY"):
+                if has_password(c) or os.environ.get("MAILSLURP_API_KEY"):
+                    chosen = c
+                    break
+        if not chosen:
+            # token path
+            return build_executor_from_env(
+                scope_path=scope_path, owner_id=owner_id, non_owner_id=non_owner_id
+            )
+        refs.append((iid, chosen))
+
+    # Need playwright for password path
+    try:
+        import playwright  # noqa: F401
+    except ImportError:
+        return None, {"status": "blocked", "reason": "playwright_not_installed_for_password_login"}
+
+    from agent_lite.browser.password_login import establish_password_sessions
+    from agent_lite.scope.guard import ScopeGuard
+
+    scope = ScopeGuard.from_file(scope_path)
+    hosts = set()
+    # collect hosts from scope rules if possible
+    try:
+        for rule in getattr(scope, "in_scope", None) or []:
+            if isinstance(rule, dict) and rule.get("host"):
+                hosts.add(str(rule["host"]).lower())
+    except Exception:  # noqa: BLE001
+        pass
+    hosts.add(urlparse(base_url).hostname or "")
+
+    idr = IdentityResolver()
+    result = establish_password_sessions(
+        idr,
+        pairs=refs,
+        login_url=login_url,
+        allowed_hosts=hosts,
+    )
+    if result.get("status") != "ok":
+        return None, result
+
+    budget = BudgetGuard.from_file(Path("config/budget.yaml"))
+    ex = HttpExecutor(scope=scope, budget=budget, identities=idr, allowed_schemes={"http", "https"})
+    return ex, {"status": "ok", "auth_method": "browser_password", "login_trace": result.get("trace")}
