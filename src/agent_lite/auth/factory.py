@@ -11,6 +11,7 @@ from agent_lite.auth.mailbox import MockMailboxProvider
 from agent_lite.auth.mailslurp import MailSlurpMailboxProvider
 from agent_lite.auth.orchestrator import AuthOrchestrator
 from agent_lite.auth.temp_mailbox import TempMailboxProvider
+from agent_lite.browser.factory import build_browser_provider
 
 
 PROFILES = {
@@ -68,15 +69,17 @@ def build_orchestrator(
     if kind == "mock":
         mb = MockMailboxProvider()
         auth = MockAuthProvider(mailbox=mb, require_otp=True)
+        browser, bmeta = build_browser_provider(force_runtime=os.environ.get("BROWSER_RUNTIME", "fake") if os.environ.get("BROWSER_RUNTIME") else "fake")
         orch = AuthOrchestrator(
             identity_provider=MockIdentityProvider(),
             mailbox=mb,
             auth=auth,
             target=target,
             provider_kind="mock",
-            allow_registration=True,  # mock lab does not need real browser
+            allow_registration=True,
+            browser=browser,
         )
-        return orch, {**meta, "status": "ok", "reason": "mock_ready"}
+        return orch, {**meta, "status": "ok", "reason": "mock_ready", "browser": bmeta}
 
     if kind == "mailslurp":
         mb = MailSlurpMailboxProvider()
@@ -86,7 +89,7 @@ def build_orchestrator(
                 "status": "WAITING_FOR_AUTH",
                 "reason": "missing_mailslurp_api_key",
             }
-        browser_ok = bool(os.environ.get("BROWSER_MCP_ENABLED")) or force_allow_registration
+        browser_ok = bool(os.environ.get("BROWSER_MCP_ENABLED") or os.environ.get("MCP_BROWSER_URL") or os.environ.get("BROWSER_RUNTIME") in ("playwright", "mcp", "fake")) or force_allow_registration
         auth = MockAuthProvider(mailbox=mb, require_otp=True)
         orch = AuthOrchestrator(
             identity_provider=MockIdentityProvider(),
@@ -112,7 +115,7 @@ def build_orchestrator(
                 "status": "WAITING_FOR_AUTH",
                 "reason": "missing_temp_mail_base_url",
             }
-        browser_ok = bool(os.environ.get("BROWSER_MCP_ENABLED")) or force_allow_registration
+        browser_ok = bool(os.environ.get("BROWSER_MCP_ENABLED") or os.environ.get("MCP_BROWSER_URL") or os.environ.get("BROWSER_RUNTIME") in ("playwright", "mcp", "fake")) or force_allow_registration
         auth = MockAuthProvider(mailbox=mb, require_otp=True)
         orch = AuthOrchestrator(
             identity_provider=MockIdentityProvider(),

@@ -20,12 +20,17 @@ class BrowserCapability:
 def detect_browser_capability(*, prefer_fake: bool = False) -> BrowserCapability:
     if prefer_fake or os.environ.get("BROWSER_FORCE_FAKE") == "1":
         return BrowserCapability(status="BROWSER_AVAILABLE", runtime="fake", detail="test_only")
-    if os.environ.get("BROWSER_MCP_ENABLED"):
-        # MCP not packaged in this repo runtime — report misconfigured unless adapter exists
+    if os.environ.get("MCP_BROWSER_URL") or os.environ.get("BROWSER_MCP_ENABLED"):
+        if os.environ.get("MCP_BROWSER_URL"):
+            return BrowserCapability(
+                status="BROWSER_AVAILABLE",
+                runtime="mcp",
+                detail="MCP_BROWSER_URL configured",
+            )
         return BrowserCapability(
             status="BROWSER_MISCONFIGURED",
             runtime="mcp",
-            detail="BROWSER_MCP_ENABLED set but no MCP adapter in Lite package",
+            detail="BROWSER_MCP_ENABLED set but MCP_BROWSER_URL missing",
         )
     try:
         import playwright  # type: ignore  # noqa: F401

@@ -47,3 +47,16 @@ Available today:
 | FakeAuthBrowser | offline tests |
 | PlaywrightBrowserProvider | optional `.[browser]` + Browser Lab workflow |
 | MCP | contract only — not executable in GHA Lite |
+
+
+## Browser runtimes (finished boundary)
+
+| Runtime | How to enable | GHA |
+|---------|---------------|-----|
+| `fake` | `BROWSER_RUNTIME=fake` | offline |
+| `playwright` | `BROWSER_RUNTIME=playwright` + `.[browser]` | Browser Lab / research input |
+| `mcp` | `MCP_BROWSER_URL` (+ optional token) | secret required; fail-closed if missing |
+
+`build_browser_provider()` selects implementation. **No silent real→fake.**
+
+MCP is an HTTP tool bridge (`POST /tools/call`). You must run/provide the MCP browser server URL — Lite does not embed a full MCP daemon.

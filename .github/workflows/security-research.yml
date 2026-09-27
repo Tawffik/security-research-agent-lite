@@ -70,6 +70,15 @@ on:
           - two_test_users_mailslurp
           - two_test_users_temp
           - manual
+      browser_runtime:
+        description: "none|fake|playwright|mcp (mcp needs MCP_BROWSER_URL secret)"
+        type: choice
+        default: "none"
+        options:
+          - none
+          - fake
+          - playwright
+          - mcp
       require_llm:
         description: "Fail if LLM API key missing"
         type: boolean
@@ -85,6 +94,11 @@ jobs:
           python-version: "3.12"
       - name: Install
         run: pip install -e ".[dev]"
+      - name: Install browser runtime
+        if: ${{ inputs.browser_runtime == 'playwright' }}
+        run: |
+          pip install -e ".[browser]"
+          python -m playwright install --with-deps chromium
       - name: Tests
         run: pytest -q
       - name: Fetch BugBountyCI artifact
@@ -123,6 +137,9 @@ jobs:
           TEMP_MAIL_API_KEY: ${{ secrets.TEMP_MAIL_API_KEY }}
           TEMP_MAIL_BASE_URL: ${{ secrets.TEMP_MAIL_BASE_URL }}
           BROWSER_MCP_ENABLED: ${{ secrets.BROWSER_MCP_ENABLED }}
+          BROWSER_RUNTIME: ${{ inputs.browser_runtime }}
+          MCP_BROWSER_URL: ${{ secrets.MCP_BROWSER_URL }}
+          MCP_BROWSER_TOKEN: ${{ secrets.MCP_BROWSER_TOKEN }}
         run: |
           set -euo pipefail
           ARGS=(
