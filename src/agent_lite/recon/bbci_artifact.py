@@ -68,21 +68,46 @@ def download_artifact_zip(
     token: str,
     dest_zip: Path,
 ) -> tuple[bool, str]:
+    """
+    GitHub returns 302 to a signed URL for artifact zips.
+    Re-sending Authorization to that host causes http_401 — strip auth on redirect.
+    """
     url = f"https://api.github.com/repos/{repo}/actions/artifacts/{artifact_id}/zip"
-    req = urllib.request.Request(
-        url,
-        headers={
-            "Authorization": f"Bearer {token}",
-            "Accept": "application/vnd.github+json",
-            "X-GitHub-Api-Version": "2022-11-28",
-            "User-Agent": "security-research-agent-lite",
-        },
-    )
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "Accept": "application/vnd.github+json",
+        "X-GitHub-Api-Version": "2022-11-28",
+        "User-Agent": "security-research-agent-lite",
+    }
     try:
-        with urllib.request.urlopen(req, timeout=300) as resp:
-            dest_zip.parent.mkdir(parents=True, exist_ok=True)
-            dest_zip.write_bytes(resp.read())
-        return True, "ok"
+        # Manual first request without auto-redirect
+        class _NoRedirect(urllib.request.HTTPRedirectHandler):
+            def redirect_request(self, req, fp, code, msg, headers, newurl):  # noqa: A002
+                return None
+
+        opener = urllib.request.build_opener(_NoRedirect)
+        req = urllib.request.Request(url, headers=headers, method="GET")
+        try:
+            with opener.open(req, timeout=120) as resp:
+                dest_zip.parent.mkdir(parents=True, exist_ok=True)
+                dest_zip.write_bytes(resp.read())
+            return True, "ok"
+        except urllib.error.HTTPError as e:
+            if e.code not in (301, 302, 303, 307, 308):
+                return False, f"http_{e.code}"
+            loc = e.headers.get("Location") or e.headers.get("location")
+            if not loc:
+                return False, f"http_{e.code}_no_location"
+            # Second hop: signed URL — no Authorization header
+            req2 = urllib.request.Request(
+                loc,
+                headers={"User-Agent": "security-research-agent-lite"},
+                method="GET",
+            )
+            with urllib.request.urlopen(req2, timeout=300) as resp2:
+                dest_zip.parent.mkdir(parents=True, exist_ok=True)
+                dest_zip.write_bytes(resp2.read())
+            return True, "ok"
     except urllib.error.HTTPError as e:
         return False, f"http_{e.code}"
     except Exception as e:  # noqa: BLE001
