@@ -26,6 +26,23 @@ class NormalizedRecon:
         return asdict(self)
 
 
+def _host_token(value: str) -> str:
+    """Normalize host strings that may be full URLs."""
+    s = (value or "").strip().lower()
+    if not s:
+        return ""
+    if s.startswith("http://") or s.startswith("https://"):
+        p = urlparse(s)
+        return (p.hostname or "").lower()
+    # strip path if accidental
+    if "/" in s:
+        s = s.split("/", 1)[0]
+    if ":" in s and not s.count(":") > 1:
+        # host:port
+        return s.split(":", 1)[0]
+    return s
+
+
 def _unwrap(raw: dict[str, Any]) -> dict[str, Any]:
     data = dict(raw)
     for key in ("recon", "result", "data", "artifact", "bbci", "bundle"):
@@ -120,11 +137,14 @@ class ReconAdapter:
         hosts: list[str] = []
         for h in data.get("hosts") or data.get("domains") or []:
             if isinstance(h, str) and h.strip():
-                hosts.append(h.strip().lower())
+                tok = _host_token(h)
+                if tok:
+                    hosts.append(tok)
             elif isinstance(h, dict):
-                name = str(h.get("host") or h.get("name") or h.get("domain") or "").strip()
-                if name:
-                    hosts.append(name.lower())
+                name = str(h.get("host") or h.get("name") or h.get("domain") or h.get("url") or "").strip()
+                tok = _host_token(name)
+                if tok:
+                    hosts.append(tok)
 
         host = str(
             data.get("primary_host")
@@ -134,9 +154,17 @@ class ReconAdapter:
             or (hosts[0] if hosts else "")
             or ""
         ).strip()
-        if not host:
+        host_l = _host_token(host)
+        if not host_l:
             raise ValueError("primary_host/host/target required")
-        host_l = host.lower()
+        # de-dupe hosts preserve order
+        seen_h: set[str] = set()
+        hosts_u: list[str] = []
+        for h in hosts:
+            if h and h not in seen_h:
+                seen_h.add(h)
+                hosts_u.append(h)
+        hosts = hosts_u
         if host_l not in hosts:
             hosts.insert(0, host_l)
 

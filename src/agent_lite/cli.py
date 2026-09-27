@@ -80,8 +80,15 @@ def main(argv: list[str] | None = None) -> int:
         return 5
 
     recon_path = resolution.recon_path
-    scope_path = args.scope or resolution.scope_path or "config/scope.yaml"
     engagement_id = args.engagement_id or resolution.engagement_id
+    scope_path = args.scope or resolution.scope_path or "config/scope.yaml"
+    # BBCI-imported recon: auto GET-only scope so offline analysis is not SCOPE_BLOCKED
+    rp = str(recon_path).lower()
+    if "bbci" in rp or Path(recon_path).name.startswith("bbci_composed"):
+        from agent_lite.recon.bbci_artifact import write_scope_from_recon
+        auto_scope = Path(args.artifacts_dir) / engagement_id / "bbci_auto_scope.yaml"
+        write_scope_from_recon(Path(recon_path), auto_scope, program=f"bbci-{engagement_id}")
+        scope_path = str(auto_scope)
 
     llm = None
     llm_status = "llm_disabled"

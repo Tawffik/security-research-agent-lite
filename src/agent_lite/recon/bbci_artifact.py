@@ -158,6 +158,125 @@ def _score_recon_candidate(path: Path) -> int:
     return score
 
 
+
+def _read_json_or_jsonl(path: Path) -> Any:
+    text = path.read_text(encoding="utf-8", errors="replace").strip()
+    if not text:
+        return None
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError:
+        rows = []
+        for line in text.splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                rows.append(json.loads(line))
+            except json.JSONDecodeError:
+                continue
+        return rows if rows else None
+
+
+def compose_bbci_recon(extract_dir: Path) -> Optional[Path]:
+    """
+    Build a single Lite-friendly recon JSON from a typical BBCI results tree.
+    Writes artifacts/bbci_composed_recon.json under extract_dir.
+    """
+    extract_dir = Path(extract_dir)
+    profile = None
+    for cand in [
+        extract_dir / "smart-fuzzing" / "target_profile.json",
+        extract_dir / "target_profile.json",
+    ]:
+        if cand.is_file():
+            try:
+                profile = json.loads(cand.read_text(encoding="utf-8"))
+            except Exception:  # noqa: BLE001
+                profile = None
+            break
+
+    hosts: list[str] = []
+    endpoints: list[Any] = []
+    technologies: list[str] = []
+    observations: list[dict[str, Any]] = []
+
+    if isinstance(profile, dict):
+        hosts.extend(list(profile.get("hosts") or []))
+        technologies.extend(list(profile.get("technologies") or []))
+        target = profile.get("target") or profile.get("primary_host") or ""
+    else:
+        target = ""
+
+    # endpoints from ai_infra or jsonl
+    for rel in (
+        "ai_infra/endpoints.json",
+        "endpoints.json",
+        "live/live.json",
+        "detection/parameter_intelligence.json",
+    ):
+        fp = extract_dir / rel
+        if not fp.is_file():
+            continue
+        data = _read_json_or_jsonl(fp)
+        if isinstance(data, list):
+            for item in data:
+                if isinstance(item, dict):
+                    endpoints.append(item)
+                    u = str(item.get("url") or item.get("uri") or "")
+                    if u:
+                        endpoints.append(u)
+                elif isinstance(item, str):
+                    endpoints.append(item)
+        elif isinstance(data, dict):
+            for key in ("endpoints", "urls", "results", "data"):
+                for item in data.get(key) or []:
+                    endpoints.append(item)
+
+    # live hosts jsonl
+    live = extract_dir / "live" / "live.json"
+    if live.is_file():
+        data = _read_json_or_jsonl(live)
+        if isinstance(data, list):
+            for item in data:
+                if isinstance(item, str):
+                    hosts.append(item)
+                elif isinstance(item, dict):
+                    hosts.append(str(item.get("host") or item.get("url") or item.get("input") or ""))
+
+    # tech jsonl
+    tech = extract_dir / "live" / "tech.json"
+    if tech.is_file():
+        data = _read_json_or_jsonl(tech)
+        if isinstance(data, list):
+            for item in data:
+                if isinstance(item, str):
+                    technologies.append(item)
+                elif isinstance(item, dict):
+                    technologies.append(str(item.get("tech") or item.get("name") or item.get("technology") or ""))
+
+    if not target and hosts:
+        target = hosts[0]
+
+    if not target and not hosts and not endpoints:
+        return None
+
+    composed = {
+        "schema_version": "bbci_composed_v1",
+        "primary_host": target,
+        "target": target,
+        "hosts": [h for h in hosts if h],
+        "endpoints": endpoints[:5000],
+        "technologies": [t for t in technologies if t],
+        "observations": observations,
+        "notes": "composed_from_bbci_artifact_tree",
+        "provenance": {"composer": "agent_lite.recon.bbci_artifact.compose_bbci_recon"},
+    }
+    out = extract_dir / "bbci_composed_recon.json"
+    out.write_text(json.dumps(composed, indent=2), encoding="utf-8")
+    return out
+
+
 def discover_recon_json(extract_dir: Path) -> tuple[Optional[Path], list[str]]:
     candidates: list[tuple[int, Path]] = []
     for p in extract_dir.rglob("*"):
@@ -253,7 +372,13 @@ def resolve_bbci_artifact(
     except Exception as e:  # noqa: BLE001
         return BbciArtifactResult(status="error", reason=f"extract_failed:{type(e).__name__}")
 
+    composed = compose_bbci_recon(extract_dir)
     recon, cand = discover_recon_json(extract_dir)
+    # Prefer composed bundle when available (real BBCI multi-file layout)
+    if composed is not None and composed.is_file():
+        recon = composed
+        if str(composed) not in cand:
+            cand = [str(composed)] + cand
     if recon is None:
         return BbciArtifactResult(
             status="blocked",
@@ -273,7 +398,42 @@ def resolve_bbci_artifact(
     )
 
 
+def write_scope_from_recon(recon_path: Path, dest: Path, *, program: str = "bbci-import") -> Path:
+    """
+    Build fail-closed GET-only scope from normalized recon hosts.
+    For analysis/synthetic only — does not enable live mutations.
+    """
+    import yaml
+    from agent_lite.recon.adapter import ReconAdapter
+
+    n = ReconAdapter().from_file(recon_path)
+    hosts = list(dict.fromkeys([n.primary_host] + list(n.hosts)))
+    in_scope = []
+    for h in hosts:
+        if not h:
+            continue
+        in_scope.append({"host": h, "methods": ["GET", "HEAD", "OPTIONS"]})
+    # Always allow synthetic lab hosts so analysis/scenario discrimination still runs
+    lab_hosts = ["api.acme-demo.test", "*.acme-demo.test"]
+    existing = {str(x.get("host")) for x in in_scope}
+    for h in lab_hosts:
+        if h not in existing:
+            in_scope.append({"host": h, "methods": ["GET", "HEAD", "OPTIONS"]})
+    doc = {
+        "program": program,
+        "in_scope": in_scope[:200],
+        "out_of_scope": [],
+        "max_risk": "medium",
+        "allow_mutations": False,
+        "notes": "auto_from_bbci_recon_analysis_only",
+    }
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    dest.write_text(yaml.safe_dump(doc, sort_keys=False), encoding="utf-8")
+    return dest
+
+
 def main(argv: Optional[list[str]] = None) -> int:
+
     import argparse
 
     p = argparse.ArgumentParser(description="Fetch BugBountyCI artifact and resolve recon path")
